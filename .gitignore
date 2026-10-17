@@ -1,0 +1,13 @@
+data/
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+.claude/launch.json
+mobile/node_modules/
+mobile/www/
+mobile/dist/
+mobile/android/keystore.properties
+*.jks
+*.keystore
+.DS_Store

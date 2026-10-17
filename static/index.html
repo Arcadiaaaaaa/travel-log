@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="旅行记录">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/icon-180.png">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+  <title>旅行记录</title>
+</head>
+<body>
+  <div id="login" class="screen" hidden>
+    <form id="login-form" class="login-card">
+      <img src="/icons/icon-192.png" alt="" class="login-icon" width="72" height="72">
+      <h1>旅行记录</h1>
+      <input type="password" id="login-password" placeholder="密码" autocomplete="current-password" required>
+      <button type="submit" class="btn primary">登录</button>
+      <p class="error" id="login-error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="main" class="screen" hidden>
+    <header class="topbar">
+      <h1 id="view-title">旅行记录</h1>
+      <button type="button" id="menu-btn" class="icon-btn" aria-label="更多操作">···</button>
+    </header>
+    <div id="records">
+      <section class="stats" id="stats" aria-label="统计"></section>
+      <nav class="filters" id="filters" aria-label="按交通方式筛选"></nav>
+      <nav class="filters sub" id="network-filters" aria-label="按地铁系统筛选" hidden></nav>
+      <main id="list"></main>
+    </div>
+    <main id="dashboard" hidden></main>
+    <button type="button" id="add-btn" class="fab" aria-label="新增行程">+</button>
+    <nav class="tabbar" aria-label="页面">
+      <button type="button" data-view="records" class="active" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
+        <span>记录</span>
+      </button>
+      <button type="button" data-view="dash">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-6"/></svg>
+        <span>看板</span>
+      </button>
+    </nav>
+  </div>
+  <div id="chart-tip" class="chart-tip" role="status" hidden></div>
+
+  <dialog id="trip-dialog" class="sheet">
+    <form id="trip-form" novalidate>
+      <div class="sheet-head">
+        <button type="button" class="link" data-close>取消</button>
+        <h2 id="trip-dialog-title">新增行程</h2>
+        <button type="submit" class="link strong" id="save-btn">保存</button>
+      </div>
+      <div class="sheet-body">
+        <fieldset class="group">
+          <legend>交通方式</legend>
+          <div class="chips" id="transport-options"></div>
+        </fieldset>
+
+        <div class="group" id="general-fields">
+          <div class="row2">
+            <label class="field"><span>出发地</span>
+              <input name="from_place" maxlength="50" placeholder="可留空"></label>
+            <label class="field"><span>到达地</span>
+              <input name="to_place" maxlength="50" placeholder="可留空"></label>
+          </div>
+          <div class="row2">
+            <label class="field"><span><span id="train-no-label">车次号</span>（选填）</span>
+              <input name="train_no" maxlength="20" autocapitalize="characters" autocomplete="off" spellcheck="false"></label>
+            <label class="field"><span>型号（选填）</span>
+              <input name="vehicle_model" maxlength="50" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <div class="field" id="seat-field">
+            <span>坐席（选填，再点一次取消）</span>
+            <div class="chips small" id="seat-options"></div>
+          </div>
+        </div>
+
+        <div class="group" id="metro-fields" hidden>
+          <div class="field"><span>地铁系统</span><div id="network-picker"></div></div>
+          <div id="legs"></div>
+          <button type="button" class="btn ghost" id="add-leg-btn">+ 添加换乘</button>
+          <datalist id="station-options"></datalist>
+        </div>
+
+        <div class="group">
+          <label class="field"><span>出发时间</span>
+            <input type="datetime-local" name="depart_at" required></label>
+          <label class="field"><span>到达时间</span>
+            <input type="datetime-local" name="arrive_at" required></label>
+          <div class="row2">
+            <label class="field"><span>票价（元）</span>
+              <input name="price" inputmode="decimal" placeholder="0.00" required autocomplete="off"></label>
+            <label class="field"><span>里程（公里）</span>
+              <input name="distance_km" inputmode="decimal" placeholder="选填" autocomplete="off"></label>
+          </div>
+        </div>
+
+        <div class="group">
+          <label class="field"><span>备注</span>
+            <textarea name="note" rows="3" maxlength="1000" placeholder="可留空"></textarea></label>
+        </div>
+
+        <p class="error" id="trip-error" role="alert"></p>
+        <button type="button" id="delete-btn" class="btn danger" hidden>删除这条记录</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="menu-dialog" class="sheet menu">
+    <div class="menu-list">
+      <button type="button" class="menu-item" id="export-btn">导出数据（JSON）</button>
+      <button type="button" class="menu-item" id="import-btn">从 JSON 导入</button>
+      <button type="button" class="menu-item danger-text" id="logout-btn">退出登录</button>
+    </div>
+    <button type="button" class="menu-item cancel" data-close>取消</button>
+  </dialog>
+
+  <input type="file" id="import-file" accept="application/json,.json" hidden>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/app.js"></script>
+  <script src="/dashboard.js"></script>
+</body>
+</html>

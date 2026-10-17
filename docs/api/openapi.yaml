@@ -1,0 +1,493 @@
+openapi: 3.1.0
+info:
+  title: 旅行记录 API
+  version: "1"
+  description: |
+    旅行记录服务器的接口契约，所有客户端共用。
+
+    - 业务规则（字段含义、校验、统计口径）见 `docs/rules.md`；认证与跨源规则见 `docs/architecture.md` 第 2、3 节。
+    - 标注 `x-status: planned` 的接口、字段或机制尚未实现，由安卓计划 P1 阶段实现。其余为现有行为。
+    - 请求体和响应体都是 JSON（UTF-8）。带请求体的请求必须设置 `Content-Type: application/json`，否则返回 415。请求体最大 5 MB。
+    - 错误响应统一为 `{"error": "中文说明"}`，客户端直接把 `error` 显示给用户。
+    - 时间字段都是本地墙上时间，不带时区。
+    - 认证：带 `Authorization` 请求头时只按 Bearer 令牌判断（无效即 401，不再看 Cookie）；不带时按 Cookie `tl_session` 判断。
+    - 跨源（planned）：对 `/api/*`，来源在白名单（默认 `https://localhost`、`capacitor://localhost`，环境变量 `TRAVEL_CORS_ORIGINS`）中时，
+      所有响应（包括错误响应）都带 `Access-Control-Allow-Origin: <该来源>` 和 `Vary: Origin`；`OPTIONS` 预检返回 204，
+      `Access-Control-Allow-Methods: GET, POST, PUT, DELETE`、`Access-Control-Allow-Headers: Authorization, Content-Type`、
+      `Access-Control-Max-Age: 600`；来源不在白名单时预检返回 403 且不带任何 CORS 头。从不返回 `*`，从不返回 `Access-Control-Allow-Credentials`。
+    - 兼容：`api_version` 为 1 期间只做向后兼容的新增（见 architecture.md D7）。客户端必须忽略不认识的字段，并容忍新的枚举值。
+servers:
+  - url: https://travel.example.com
+    description: 用户自己的服务器（经 HTTPS 反向代理）
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+tags:
+  - name: 系统
+  - name: 认证
+  - name: 行程
+  - name: 导入导出
+
+paths:
+  /api/meta:
+    get:
+      x-status: planned
+      tags: [系统]
+      summary: 服务器信息（无需登录）
+      description: App 在发送密码前先调用此接口，确认对方是旅行记录服务器并检查接口版本。只返回下列字段，不泄露其他信息。
+      security: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meta" }
+
+  /api/session:
+    get:
+      tags: [认证]
+      summary: 当前是否已登录
+      security: []
+      responses:
+        "200":
+          description: 成功（未登录也返回 200）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated]
+                properties:
+                  authenticated: { type: boolean }
+
+  /api/login:
+    post:
+      tags: [认证]
+      summary: Web 登录（设置 Cookie）
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: '登录成功。响应头 `Set-Cookie: tl_session=…; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict`（HTTPS 下加 `Secure`）。'
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WrongPassword" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+        "503": { $ref: "#/components/responses/PasswordNotSet" }
+
+  /api/logout:
+    post:
+      tags: [认证]
+      summary: Web 退出登录（清除 Cookie）
+      description: 无论是否已登录都返回 200。
+      security: []
+      responses:
+        "200":
+          description: 已退出。响应头清除 Cookie（`Max-Age=0`）。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+
+  /api/tokens:
+    post:
+      x-status: planned
+      tags: [认证]
+      summary: App 登录（签发 Bearer 令牌）
+      description: |
+        与 `/api/login` 共用失败计数和限流。令牌有效期 90 天，滑动续期（见 architecture.md 第 3 节）。
+        服务器只保存令牌的 SHA-256；令牌只在本响应中出现一次。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenRequest" }
+      responses:
+        "201":
+          description: 签发成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/WrongPassword" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+        "503": { $ref: "#/components/responses/PasswordNotSet" }
+
+  /api/tokens/current:
+    delete:
+      x-status: planned
+      tags: [认证]
+      summary: App 退出登录（作废当前令牌）
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 已作废
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/trips:
+    get:
+      tags: [行程]
+      summary: 全部行程
+      description: 按 `depart_at` 倒序，相同时按 `id` 倒序。
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trips]
+                properties:
+                  trips:
+                    type: array
+                    items: { $ref: "#/components/schemas/Trip" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [行程]
+      summary: 新增行程
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TripInput" }
+      responses:
+        "201":
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trip]
+                properties:
+                  trip: { $ref: "#/components/schemas/Trip" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/trips/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    put:
+      tags: [行程]
+      summary: 修改行程（整条替换）
+      description: 请求体与新增相同，未传的可选字段按空值或默认值处理。地铁行程的区段整体替换。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TripInput" }
+      responses:
+        "200":
+          description: 已修改
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trip]
+                properties:
+                  trip: { $ref: "#/components/schemas/Trip" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+    delete:
+      tags: [行程]
+      summary: 删除行程（同时删除其区段）
+      responses:
+        "200":
+          description: 已删除
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/export:
+    get:
+      tags: [导入导出]
+      summary: 导出全部行程
+      description: '响应头带 `Content-Disposition: attachment; filename="travel-log-YYYYMMDD.json"`。'
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExportFile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/import:
+    post:
+      tags: [导入导出]
+      summary: 追加导入
+      description: 只追加，不覆盖、不去重；一次最多 20000 条；任意一条不合法则整批不导入，错误为「第 N 条：原因」。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+      responses:
+        "200":
+          description: 已导入
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported]
+                properties:
+                  imported: { type: integer, minimum: 0 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: tl_session
+      description: Web 端使用。30 天固定有效期。
+    bearerAuth:
+      type: http
+      scheme: bearer
+      x-status: planned
+      description: App 端使用。令牌是不透明字符串，90 天滑动有效期；只能放在 `Authorization` 头中。
+
+  schemas:
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { const: true }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, examples: ["到达时间不能早于出发时间"] }
+
+    Meta:
+      type: object
+      required: [app, api_version, server_version]
+      properties:
+        app: { const: travel-log }
+        api_version: { type: integer, examples: [1] }
+        server_version: { type: string, examples: ["1.0.0"] }
+
+    TokenRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+        device_name:
+          type: string
+          maxLength: 50
+          description: 去掉首尾空白后保存，可省略。例如「Android App 1.0.0」。
+    TokenResponse:
+      type: object
+      required: [token, token_type, expires_in]
+      properties:
+        token: { type: string, description: 不透明字符串，不要解析 }
+        token_type: { const: Bearer }
+        expires_in: { type: integer, description: 秒；滑动续期，仅供参考, examples: [7776000] }
+
+    Transport:
+      type: string
+      enum: [normal_train, emu, hsr, bus, metro]
+      description: 普快火车、动车组、高速动车组、公交车、地铁。客户端必须容忍将来新增的取值。
+
+    Seat:
+      type: string
+      enum: ["", 硬座, 硬卧, 软卧, 无座, 二等座, 一等座, 商务座, 二等卧, 一等卧]
+      description: |
+        普快：硬座、硬卧、软卧、无座；动车组、高速动车组：二等座、一等座、商务座、二等卧、一等卧、无座。
+        选项与交通方式不匹配时返回 400；公交、地铁无论传什么都保存为空字符串。
+
+    LocalDateTime:
+      type: string
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$'
+      examples: ["2026-10-01T23:30"]
+
+    LegInput:
+      type: object
+      properties:
+        line: { type: string, maxLength: 20, description: 线路。服务器允许为空，客户端必须填写 }
+        vehicle_model: { type: string, maxLength: 20, description: 车型，服务器规范化（6b → 6B） }
+        from_station: { type: string, maxLength: 50 }
+        to_station: { type: string, maxLength: 50 }
+
+    Leg:
+      type: object
+      required: [line, vehicle_model, from_station, to_station]
+      properties:
+        line: { type: string }
+        vehicle_model: { type: string }
+        from_station: { type: string }
+        to_station: { type: string }
+
+    TripInput:
+      type: object
+      required: [transport, depart_at, arrive_at]
+      description: |
+        `price` 与 `price_cents` 至少给一个，都给时以 `price` 为准；Web/App 表单只用 `price`，`price_cents` 用于导入导出文件。
+        文本字段都会去掉首尾空白。各字段对不同交通方式的适用范围见 rules.md 第 2 节。
+      anyOf:
+        - required: [price]
+        - required: [price_cents]
+      properties:
+        transport: { $ref: "#/components/schemas/Transport" }
+        depart_at: { $ref: "#/components/schemas/LocalDateTime" }
+        arrive_at:
+          $ref: "#/components/schemas/LocalDateTime"
+          description: 不得早于 depart_at
+        price:
+          description: 元，≥ 0，最多两位小数，≤ 1000000
+          oneOf:
+            - type: string
+              examples: ["553.5"]
+            - type: number
+        price_cents: { type: integer, minimum: 0, maximum: 100000000 }
+        distance_km:
+          description: 公里，≥ 0，最多一位小数，≤ 100000；null、空字符串、省略都记为 0
+          oneOf:
+            - type: number
+            - type: string
+            - type: "null"
+        seat: { $ref: "#/components/schemas/Seat" }
+        from_place: { type: string, maxLength: 50, description: 地铁忽略此字段，由区段推导 }
+        to_place: { type: string, maxLength: 50, description: 地铁忽略此字段，由区段推导 }
+        train_no: { type: string, maxLength: 20, description: 转大写；公交为线路；地铁保存为空 }
+        vehicle_model: { type: string, maxLength: 50, description: 地铁保存为空 }
+        network: { type: string, maxLength: 30, description: 地铁系统；非地铁保存为空 }
+        legs:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/LegInput" }
+          description: 只有地铁可以非空。地铁未传或为空数组时，用 train_no、vehicle_model、from_place、to_place 组成一段（兼容旧格式）。
+        note: { type: string, maxLength: 1000 }
+
+    Trip:
+      type: object
+      required:
+        - id
+        - transport
+        - depart_at
+        - arrive_at
+        - from_place
+        - to_place
+        - price_cents
+        - train_no
+        - vehicle_model
+        - note
+        - network
+        - seat
+        - distance_km
+        - legs
+        - created_at
+        - updated_at
+      properties:
+        id: { type: integer }
+        transport: { type: string, description: 见 Transport；客户端须容忍不认识的值 }
+        depart_at: { $ref: "#/components/schemas/LocalDateTime" }
+        arrive_at: { $ref: "#/components/schemas/LocalDateTime" }
+        from_place: { type: string, description: 地铁为第一段上车站 }
+        to_place: { type: string, description: 地铁为最后一段下车站 }
+        price_cents: { type: integer }
+        train_no: { type: string }
+        vehicle_model: { type: string }
+        note: { type: string }
+        network: { type: string }
+        seat: { type: string }
+        distance_km: { type: number, description: 未填写为 0 }
+        legs:
+          type: array
+          items: { $ref: "#/components/schemas/Leg" }
+          description: 非地铁为空数组
+        created_at: { type: string, examples: ["2026-10-18T02:15:00"] }
+        updated_at: { type: string }
+
+    ExportFile:
+      type: object
+      required: [app, version, exported_at, trips]
+      properties:
+        app: { const: travel-log }
+        version: { const: 1 }
+        exported_at: { type: string }
+        trips:
+          type: array
+          items: { $ref: "#/components/schemas/Trip" }
+
+    ImportRequest:
+      description: 导出文件原样上传，或直接是行程数组。条目按 TripInput 校验，`id`、`created_at`、`updated_at` 等字段被忽略。
+      oneOf:
+        - type: object
+          required: [trips]
+          properties:
+            trips:
+              type: array
+              maxItems: 20000
+              items: { $ref: "#/components/schemas/TripInput" }
+        - type: array
+          maxItems: 20000
+          items: { $ref: "#/components/schemas/TripInput" }
+
+  responses:
+    BadRequest:
+      description: 请求格式或字段校验错误
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: 未登录、Cookie 过期或令牌无效（错误为「请先登录」）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    WrongPassword:
+      description: 密码错误（错误为「密码错误」），计入登录失败次数
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: 记录或接口不存在
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: 请求体超过 5 MB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: 带请求体但 Content-Type 不是 application/json
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyAttempts:
+      description: 同一 IP 10 分钟内登录失败达到 5 次
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PasswordNotSet:
+      description: 服务器还没有设置密码
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

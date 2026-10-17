@@ -1,0 +1,5 @@
+# Caddy 会自动申请并续期 HTTPS 证书。把域名换成你自己的。
+travel.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8765
+}

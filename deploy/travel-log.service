@@ -1,0 +1,28 @@
+# systemd 服务示例：复制到 /etc/systemd/system/travel-log.service 后按实际路径修改
+[Unit]
+Description=旅行记录 Travel Log
+After=network.target
+
+[Service]
+Type=simple
+User=travel
+WorkingDirectory=/opt/travel-log
+ExecStart=/usr/bin/python3 /opt/travel-log/server.py serve
+Environment=TRAVEL_HOST=127.0.0.1
+Environment=TRAVEL_PORT=8765
+Environment=TRAVEL_DB=/opt/travel-log/data/travel.db
+# 服务在反向代理（Caddy/Nginx）后面时开启，用于按真实 IP 限制登录尝试
+Environment=TRAVEL_TRUST_PROXY=1
+# 只通过 HTTPS 访问时强制 Cookie 加 Secure
+Environment=TRAVEL_COOKIE_SECURE=always
+Restart=on-failure
+
+# 加固
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/travel-log/data
+
+[Install]
+WantedBy=multi-user.target
