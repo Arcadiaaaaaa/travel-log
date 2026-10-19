@@ -33,7 +33,9 @@
 
 ## 2. 前置条件
 
-**本机现状**（2026-10-18 检查）：Node 26.7.0、npm 11.19.0、git 2.55.0、Python 3.14.7。**没有 Java，没有 Android SDK 和 Android Studio。**
+**本机现状**（2026-10-19 复核）：Node 26.7.0、npm 11.19.0、git 2.55.0、Python 3.14.7。已安装 Temurin JDK 25.0.3（`/Library/Java/JavaVirtualMachines/temurin-25.jdk`，在沙箱里 `java_home` 可能找不到它）。**还没有 Android SDK 和 Android Studio。**
+
+**JDK 用哪个**：构建安卓工程时，用 Android Studio 自带的 JDK（见下面第 2 步），不要用系统里的 JDK 25。Capacitor 模板里的 Gradle 和 Android Gradle 插件，通常还不支持在 JDK 25 上运行。只有官方文档明确写了支持 JDK 25，才可以改用，并要写进日志。
 
 **需要用户自己完成的**（涉及许可协议，执行者不得代为接受）：
 
@@ -69,6 +71,13 @@
 ## 4. P1 服务器：`/api/meta`、令牌登录、CORS
 
 只改 `server.py`、`tests/test_server.py`、`README.md`，以及把 `docs/api/openapi.yaml` 中已实现项的 `x-status: planned` 删掉。**接口行为必须与 openapi.yaml、architecture.md 第 3 节完全一致。**
+
+### P1.0 修复 `/favicon.ico` 404（P0 审查时发现的老问题）
+
+- **现象**：页面声明的图标是 `/icons/icon-192.png`，但 Chromium 系浏览器再次打开页面时，仍会请求 `/favicon.ico`，服务器返回 404，Console 里出现报错。这个问题从第一版就有，与 P0 的改动无关。
+- **修法**：在 `serve_static()` 里把 `/favicon.ico` 映射到 `icons/icon-192.png`，返回 200，`Content-Type: image/png`。可以直接采用 P0 准备的补丁（`/tmp/travel-p0-evidence/favicon-proposal.patch`）。不要新增 `.ico` 文件，也不要把 `.ico` 加进 `CONTENT_TYPES`。
+- **测试**：新增 `test_favicon`，检查状态码、`Content-Type`，以及返回内容与 `icon-192.png` 完全相同。
+- 单独提交：`fix: 为 /favicon.ico 返回应用图标`。
 
 ### P1.1 版本常量与 `GET /api/meta`
 
@@ -146,6 +155,7 @@
 - `python3 -m unittest discover -s tests -v` 全部通过，原有 14 个测试一个都不改。
 - 日志里记录下面这些命令的输出。用临时数据库和临时密码；令牌只保留前 6 位，其余打码。
   ```bash
+  curl -sI http://127.0.0.1:8765/favicon.ico
   curl -s http://127.0.0.1:8765/api/meta
   curl -s -X POST -H 'Content-Type: application/json' -d '{"password":"<临时密码>","device_name":"curl"}' http://127.0.0.1:8765/api/tokens
   curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/trips
@@ -209,7 +219,7 @@
 ### P2 验收
 
 - `node --check static/platform.js`、`node --check static/app.js`、`node --check static/dashboard.js` 都通过。
-- 附录 A 的 Web 回归清单全部通过。在浏览器开发者工具的 Network 面板里，只有同源请求。
+- 附录 A 的 Web 回归清单全部通过（第 11 条包括 Network 面板中应用发出的请求只有同源请求）。
 - 在日志里列出 `app.js` 中所有改动过的函数，并说明 Web 端的行为为什么不变。
 
 ## 6. P3 Capacitor 安卓工程
@@ -390,7 +400,9 @@ mobile/
 8. **导入导出**：导出 JSON 后再导入，提示的条数正确，列表数量翻倍。
 9. **退出后重新登录**正常。
 10. **深色模式**下外观正常。
-11. **开发者工具**：Console 没有报错；Network 面板里只有同源请求。
+11. **开发者工具**：Console 没有报错；Network 面板里，应用发出的请求只有同源请求。
+    - 浏览器扩展产生的条目（如 `chrome-extension://` 资源和扩展自己的报错）不算。最好用没有安装扩展的浏览器配置来跑这一条。
+    - 判断依据以服务器日志为准：日志里不能有 4xx/5xx，有意测试错误情况（如故意输错密码）产生的除外。
 
 ## 附录 B　安卓验收清单
 
