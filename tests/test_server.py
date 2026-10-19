@@ -255,6 +255,12 @@ class ServerTest(unittest.TestCase):
             resp, _ = self.request("GET", path)
             self.assertEqual(resp.status, 404, path)
 
+    def test_favicon(self):
+        resp, body = self.request("GET", "/favicon.ico")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Content-Type"), "image/png")
+        self.assertEqual(body, (server.STATIC_DIR / "icons" / "icon-192.png").read_bytes())
+
 
 class MigrationTest(unittest.TestCase):
     def test_v0_metro_rows_become_single_leg(self):

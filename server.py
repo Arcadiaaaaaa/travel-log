@@ -727,6 +727,8 @@ class Handler(BaseHTTPRequestHandler):
     def serve_static(self, path: str):
         if path == "/":
             path = "/index.html"
+        elif path == "/favicon.ico":
+            path = "/icons/icon-192.png"
         target = (STATIC_DIR / path.lstrip("/")).resolve()
         if STATIC_DIR not in target.parents or not target.is_file():
             raise ApiError(404, "页面不存在")
