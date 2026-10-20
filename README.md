@@ -86,6 +86,9 @@ iPhone 的“添加到主屏幕”和 Secure Cookie 都需要 HTTPS，推荐用 
 | `TRAVEL_DB` | `data/travel.db` | 数据库路径 |
 | `TRAVEL_TRUST_PROXY` | 未设置 | 设为 `1` 时从 `X-Forwarded-For` 取客户端 IP（仅在反向代理后面开启） |
 | `TRAVEL_COOKIE_SECURE` | `auto` | `always` / `never` / `auto`（根据 `X-Forwarded-Proto` 判断） |
+| `TRAVEL_CORS_ORIGINS` | `https://localhost,capacitor://localhost` | App 来源白名单，逗号分隔；设为空字符串关闭 CORS，不支持 `*` |
+
+Web 继续通过 `/api/login` 使用 30 天固定有效期的 Cookie。App 先读取公开的 `/api/meta` 检查接口版本，再通过 `/api/tokens` 获取 90 天滑动有效期的 Bearer 令牌，退出时调用 `DELETE /api/tokens/current`。CORS 只对 `/api/*` 的白名单来源开放，不允许跨源携带 Cookie。接口格式和认证规则见多端开发文档。
 
 ### 修改密码
 

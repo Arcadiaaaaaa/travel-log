@@ -31,6 +31,8 @@ from urllib.parse import unquote, urlparse
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 DEFAULT_DB = BASE_DIR / "data" / "travel.db"
+SERVER_VERSION = "1.0.0"
+API_VERSION = 1
 
 TRANSPORT_TYPES = {
     "normal_train": "普快火车",
@@ -68,6 +70,8 @@ SEAT_OPTIONS = {
 
 SESSION_COOKIE = "tl_session"
 SESSION_TTL = 30 * 24 * 3600
+TOKEN_TTL = 90 * 24 * 3600
+TOKEN_RENEW_THRESHOLD = 89 * 24 * 3600
 MAX_BODY = 5 * 1024 * 1024
 MAX_IMPORT = 20000
 MAX_PRICE_CENTS = 100_000_000  # 100 万元
@@ -166,8 +170,16 @@ def migrate_v2(conn):
         conn.execute("ALTER TABLE trips ADD COLUMN distance_km REAL NOT NULL DEFAULT 0")
 
 
+def migrate_v3(conn):
+    """区分 Web Cookie 与 App 令牌，保留已有 Cookie 会话。"""
+    conn.execute("ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'cookie'")
+    conn.execute("ALTER TABLE sessions ADD COLUMN device_name TEXT NOT NULL DEFAULT ''")
+    conn.execute("ALTER TABLE sessions ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE sessions ADD COLUMN last_used_at INTEGER NOT NULL DEFAULT 0")
+
+
 # 按顺序执行，PRAGMA user_version 记录已执行到第几个
-MIGRATIONS = [migrate_v1, migrate_v2]
+MIGRATIONS = [migrate_v1, migrate_v2, migrate_v3]
 
 TRIP_COLUMNS = (
     "transport", "depart_at", "arrive_at", "from_place", "to_place",
@@ -412,27 +424,39 @@ class Database:
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def create_session(self) -> str:
+    def create_session(self, *, kind="cookie", device_name="") -> str:
         token = secrets.token_urlsafe(32)
         now = int(time.time())
         with self.lock, self.conn:
             self.conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
             self.conn.execute(
-                "INSERT INTO sessions (token_hash, expires_at) VALUES (?, ?)",
-                (self._token_hash(token), now + SESSION_TTL),
+                "INSERT INTO sessions (token_hash, expires_at, kind, device_name, created_at, last_used_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (self._token_hash(token), now + (TOKEN_TTL if kind == "token" else SESSION_TTL),
+                 kind, device_name, now, now),
             )
         return token
 
-    def check_session(self, token: str) -> bool:
-        with self.lock:
-            row = self.conn.execute(
-                "SELECT expires_at FROM sessions WHERE token_hash = ?", (self._token_hash(token),)
-            ).fetchone()
-        return bool(row) and row["expires_at"] >= time.time()
-
-    def delete_session(self, token: str):
+    def check_session(self, token: str, *, kind="cookie") -> bool:
+        now = time.time()
         with self.lock, self.conn:
-            self.conn.execute("DELETE FROM sessions WHERE token_hash = ?", (self._token_hash(token),))
+            row = self.conn.execute(
+                "SELECT expires_at FROM sessions WHERE token_hash = ? AND kind = ?",
+                (self._token_hash(token), kind),
+            ).fetchone()
+            if not row or row["expires_at"] < now:
+                return False
+            # 令牌不足 89 天才续到 90 天；Cookie 不续期，重复请求不写库。
+            if kind == "token" and row["expires_at"] - now < TOKEN_RENEW_THRESHOLD:
+                self.conn.execute(
+                    "UPDATE sessions SET expires_at = ?, last_used_at = ? WHERE token_hash = ? AND kind = 'token'",
+                    (int(now) + TOKEN_TTL, int(now), self._token_hash(token)),
+                )
+            return True
+
+    def delete_session(self, token: str, *, kind="cookie"):
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM sessions WHERE token_hash = ? AND kind = ?", (self._token_hash(token), kind))
 
     # 行程
     def _with_legs(self, rows, leg_rows) -> list[dict]:
@@ -514,11 +538,14 @@ class Database:
 class TravelServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, db: Database, *, trust_proxy=False, cookie_secure="auto"):
+    def __init__(self, address, db: Database, *, trust_proxy=False, cookie_secure="auto", cors_origins=None):
         super().__init__(address, Handler)
         self.db = db
         self.trust_proxy = trust_proxy
         self.cookie_secure = cookie_secure
+        if cors_origins is None:
+            cors_origins = os.environ.get("TRAVEL_CORS_ORIGINS", "https://localhost,capacitor://localhost").split(",")
+        self.cors_origins = frozenset(origin.strip() for origin in cors_origins if origin.strip() and origin.strip() != "*")
         self._failures: dict[str, list[float]] = {}
         self._failures_lock = threading.Lock()
 
@@ -565,6 +592,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         self.dispatch("DELETE")
 
+    def do_OPTIONS(self):
+        self.dispatch("OPTIONS")
+
     # --- 路由 ---
 
     def dispatch(self, method: str, head_only: bool = False):
@@ -572,8 +602,9 @@ class Handler(BaseHTTPRequestHandler):
         self._head_only = head_only
         self._body_consumed = False
         path = unquote(urlparse(self.path).path)
+        self._api_request = path.startswith("/api/")
         try:
-            if path.startswith("/api/"):
+            if self._api_request:
                 self.handle_api(method, path)
             elif method == "GET":
                 self.serve_static(path)
@@ -588,15 +619,34 @@ class Handler(BaseHTTPRequestHandler):
     def handle_api(self, method: str, path: str):
         db = self.server.db
 
+        if method == "OPTIONS":
+            if self.headers.get("Origin") not in self.server.cors_origins:
+                raise ApiError(403, "来源不被允许")
+            return self.send_bytes(204, b"", "application/json; charset=utf-8", {
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE",
+                "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                "Access-Control-Max-Age": "600",
+            })
+        if path == "/api/meta" and method == "GET":
+            return self.send_json(200, {"app": "travel-log", "api_version": API_VERSION, "server_version": SERVER_VERSION})
         if path == "/api/session" and method == "GET":
             return self.send_json(200, {"authenticated": self.current_token() is not None})
         if path == "/api/login" and method == "POST":
             return self.login()
+        if path == "/api/tokens" and method == "POST":
+            return self.issue_token()
         if path == "/api/logout" and method == "POST":
             return self.logout()
 
-        if self.current_token() is None:
+        credential = self.current_token()
+        if credential is None:
             raise ApiError(401, "请先登录")
+
+        if path == "/api/tokens/current" and method == "DELETE":
+            if credential[0] != "token":
+                raise ApiError(401, "请先登录")
+            db.delete_session(credential[1], kind="token")
+            return self.send_json(200, {"ok": True})
 
         if path == "/api/trips":
             if method == "GET":
@@ -628,6 +678,23 @@ class Handler(BaseHTTPRequestHandler):
     # --- 登录 ---
 
     def login(self):
+        self.authenticate_password()
+        token = self.server.db.create_session()
+        self.send_json(200, {"ok": True}, cookie=self.session_cookie(token, SESSION_TTL))
+
+    def issue_token(self):
+        data = self.authenticate_password()
+        device_name = data.get("device_name", "")
+        if not isinstance(device_name, str):
+            raise ApiError(400, "设备名称必须是文本")
+        device_name = device_name.strip()
+        if len(device_name) > 50:
+            raise ApiError(400, "设备名称最多 50 个字")
+        token = self.server.db.create_session(kind="token", device_name=device_name)
+        self.send_json(201, {"token": token, "token_type": "Bearer", "expires_in": TOKEN_TTL})
+
+    def authenticate_password(self):
+        # Web 与 App 共用密码检查和同一份失败计数。
         ip = self.client_ip()
         if self.server.too_many_failures(ip):
             raise ApiError(429, "尝试次数过多，请 10 分钟后再试")
@@ -640,16 +707,25 @@ class Handler(BaseHTTPRequestHandler):
             self.server.record_failure(ip)
             raise ApiError(401, "密码错误")
         self.server.clear_failures(ip)
-        token = self.server.db.create_session()
-        self.send_json(200, {"ok": True}, cookie=self.session_cookie(token, SESSION_TTL))
+        return data
 
     def logout(self):
-        token = self.current_token()
-        if token:
-            self.server.db.delete_session(token)
+        credential = self.current_token()
+        if credential and credential[0] == "cookie":
+            self.server.db.delete_session(credential[1])
         self.send_json(200, {"ok": True}, cookie=self.session_cookie("", 0))
 
     def current_token(self):
+        authorization = self.headers.get_all("Authorization")
+        if authorization is not None:
+            # 只要带了此头，即使为空或无效，也不能回退到 Cookie。
+            if len(authorization) != 1:
+                return None
+            match = re.fullmatch(r"Bearer ([A-Za-z0-9_-]+)", authorization[0])
+            if not match:
+                return None
+            token = match.group(1)
+            return ("token", token) if self.server.db.check_session(token, kind="token") else None
         raw = self.headers.get("Cookie")
         if not raw:
             return None
@@ -659,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if morsel is None or not morsel.value:
             return None
-        return morsel.value if self.server.db.check_session(morsel.value) else None
+        return ("cookie", morsel.value) if self.server.db.check_session(morsel.value) else None
 
     def session_cookie(self, value: str, max_age: int) -> str:
         parts = [f"{SESSION_COOKIE}={value}", "Path=/", f"Max-Age={max_age}", "HttpOnly", "SameSite=Strict"]
@@ -760,6 +836,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not self._head_only:
             self.wfile.write(data)
+
+    def end_headers(self):
+        # 内置处理器产生的错误响应也要遵守 API 的 CORS 规则。
+        headers = getattr(self, "headers", None)
+        origin = headers.get("Origin") if headers is not None else None
+        if origin in self.server.cors_origins and unquote(urlparse(self.path).path).startswith("/api/"):
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
 
 
 # ---------- 命令行 ----------
