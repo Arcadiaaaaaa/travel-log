@@ -140,3 +140,229 @@ OK
 - 先做 P1.0（favicon），单独提交。
 - 只改计划列出的文件；`docs/api/openapi.yaml` 只允许删除已实现项上的 `x-status: planned`。
 - 交审时附上附录 C 要求的材料。证据要么直接贴进日志，要么放在仓库外不会被自动清理的位置，因为 `/tmp` 会被系统清理。
+
+### P1 服务器元信息、令牌认证与 CORS（分支 `android/p1-server-auth`，2026-10-26）
+
+**状态**：P1.0～P1.7 已实现，49 项后端测试及六条 curl 演示通过；附录 A 第 1～10 项通过，第 11 项存在 Chrome 开发者工具自动探测的两条 404，验收口径待用户确认。尚未宣称 P1 完整验收通过，未开始 P2。
+
+**完成情况**（对应 P1 计划和验收）
+
+- [x] 从 `main` 的 `16b9fb34b0ef4158e718e42f4c0bebd94200fe3a` 新建 `android/p1-server-auth`；实现按 P1.0～P1.7 顺序推进。
+- [x] P1.0：`/favicon.ico` 映射到现有 `icons/icon-192.png`，返回 200、`image/png`，未新增图标文件或 MIME 类型；`test_favicon` 核对字节完全相同。独立提交 `c691921`（`fix: 为 /favicon.ico 返回应用图标`）。
+- [x] P1.1：`SERVER_VERSION="1.0.0"`、`API_VERSION=1`；未登录读取 `/api/meta` 返回恰好三个约定字段（`test_meta`、下方 curl 输出）。
+- [x] P1.2：只在 `MIGRATIONS` 末尾追加 `migrate_v3`，新增四列及规定默认值；v2 Cookie 会话的值和有效期不变，再次打开不重复迁移（`test_v2_cookie_session_survives_v3`）。`migrate_v1`、`migrate_v2` 的 AST 与 main 完全一致。
+- [x] P1.3：签发 201、`Bearer`、`expires_in=7776000`、没有 `Set-Cookie`；设备名默认空、去首尾空白、限制 50 字，非文本及过长按契约报 400；凭据由 `secrets.token_urlsafe(32)` 生成，数据库只有 SHA-256。撤销只影响当前令牌，Cookie 调用撤销接口返回 401（对应测试见下表）。
+- [x] P1.4：`Authorization` 存在时只判断令牌，空值、错误格式、重复头或无效令牌均不回退 Cookie；`kind` 隔离两种凭据；Cookie 30 天固定有效期，令牌不足 89 天时续为 90 天，并更新 `last_used_at`。固定时钟及六路并发测试验证每轮只写一次库；过期令牌不续期。Web 登录与 App 登录共享失败计数，改密码撤销两类会话。
+- [x] P1.5：只对 `/api/*` 的精确白名单来源返回 `Access-Control-Allow-Origin` 与 `Vary: Origin`；默认 Android/iOS 两来源，可设为空关闭。预检 204／403、静态路径 OPTIONS 405、400／401／404／413／415／429／500／501／503 等响应均有对应覆盖；从不输出 `*` 或 `Access-Control-Allow-Credentials`。
+- [x] P1.6：README 增加 `TRAVEL_CORS_ORIGINS` 及认证说明；OpenAPI 仅删除三个接口和 bearerAuth 上四行 `x-status: planned`，文本对比确认无其他契约改动。
+- [x] P1.7：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`：49 项全部通过（29.374 秒）；原有 14 个测试方法 AST 完全相同，仅新增 35 个，辅助 `request()` 增加请求头支持。
+- [x] 六条 curl 演示：200／200／201／200／204／403，原始响应头和脱敏响应体见下方。实际运行命令行 `set-password` 后，原 Cookie 和 Bearer 请求均返回 401；测试只用临时数据库和临时密码，未记录密码，令牌仅保留前 6 位。
+- [x] 本阶段证据按模板写入本日志；附录 C 材料保存在持久交审目录，所有待确认项如实列出。
+- [ ] 附录 A 全部通过：第 1～10 项通过；第 11 项待确认 Chrome DevTools 探测 404 是否按非应用请求排除，详见下表和「偏差」。
+
+**P1.7 测试主题与证据**
+
+| 计划主题 | 直接证据（测试名称或实际结果） |
+|---|---|
+| 1. 公开元信息 | `test_meta`：状态 200，响应恰好为 app、api_version、server_version。 |
+| 2. 签发及访问 | `test_token_issuance`、`test_token_authenticates_trips_and_session`：201、Bearer、90 天、无 Cookie，令牌可访问 trips/session；库中查到哈希并确认没有明文令牌。 |
+| 3. 设备名 | `test_token_device_name_defaults_to_empty`、`test_token_device_name_validation`：省略为空；null、数字、布尔、列表、对象报「设备名称必须是文本」；51 字报「设备名称最多 50 个字」；去空白后的 50 字可签发。 |
+| 4. 共享限流 | `test_token_wrong_password_shares_login_limit`、`test_token_login_limit_is_shared_in_reverse`：两方向失败 5 次后另一接口也返回 429；JSON 类型、未设密码另有测试。 |
+| 5. kind 隔离 | `test_token_and_cookie_cannot_be_interchanged`：Cookie 当 Bearer、Bearer 放 Cookie 均 401。 |
+| 6. 不回退 Cookie | `test_authorization_never_falls_back_to_cookie`、`test_authorization_duplicate_headers_are_rejected`、`test_token_rejects_malformed_bearer_with_valid_cookie`：有效 Cookie 不掩盖无效 Authorization；session 返回 authenticated=false。 |
+| 7. 撤销 | `test_token_revocation`、`test_token_revocation_rejects_cookie`、`test_token_revocation_does_not_revoke_other_sessions`：当前令牌失效，其他令牌和 Cookie 继续有效。 |
+| 8. 改密码 | `test_token_and_cookie_revoked_by_password_change`，以及 `verify_http.py` 的实际 CLI 检查：两类旧凭据均 401。 |
+| 9. 有效期与续期 | `test_token_renews_only_when_below_89_days`：10 天续为 90 天，同一时刻及恰好一天后不重复写；超过一天写一次。`test_token_renewal_is_atomic`：六路请求全 200，仅一次更新。`test_token_expired_is_not_renewed`、`test_cookie_lifetime_remains_fixed`：过期 401、不续期；Cookie 固定 2592000 秒。 |
+| 10. 迁移 | `test_v2_cookie_session_survives_v3`：v2 会话升级后 kind=cookie、旧有效期不变，新列默认值正确，user_version=3，重开仍只有一条会话。 |
+| 11. CORS | `test_cors_preflight_allowed_origins`、`test_cors_preflight_rejects_other_origins`、`test_cors_success_and_error_responses`、`test_cors_empty_and_custom_configuration`、`test_cors_environment_configuration` 等：逐项验证预检、错误响应、无 Origin、空／自定义配置、静态路径、禁止凭据头和通配符；`test_cors_state_resets_on_keep_alive_connection` 验证不串到静态响应。 |
+
+**附录 A Web 回归逐项记录**
+
+2026-10-26 在 Chrome 的专用测试标签访问 `http://127.0.0.1:8765/`，使用系统临时目录中的专用数据库。校正本地站点缩放后，DOM 实测 `innerWidth=375`、`bodyWidth=375`、`innerHeight=812`（`viewport.json`）；在该宽度重新核对高铁显示、D301 推断、换乘联动及筛选。截图、导出文件、原始请求日志及核对结果均放在 `/Users/niuniu/Documents/travel-log-review/p1/`，未放在 `/tmp`，未使用业务数据库。
+
+| 项目 | 结果 | 实际观察证据 |
+|---|---|---|
+| 1. 登录 | 通过 | 故意输入错误的临时密码显示「密码错误」；正确测试密码进入空列表。服务器仅有一条预期的 `/api/login` 401。 |
+| 2. 新增高铁 | 通过 | G1、CR400AF、二等座、553.50 元、1318.5 公里；卡片显示「G1 · CR400AF · 二等座」及「1,318.5公里」。跨年行程显示次日 01:00、1小时30分；`01-high-speed-375.jpg`。 |
+| 3. 车次推断 | 通过 | G1 改成 D301 后，动车组 radio.checked=true，二等座保留；修改车型 CRH2A 后保存成功。 |
+| 4. 地铁换乘 | 通过 | 新增北京地铁、2号线／1号线及 6B；第二段上车站先为复兴门，第一段下车站改为建国门后第二段同步为建国门；卡片显示「换乘 1 次」。`metro-linkage.txt`、`02-metro-transfer-375.jpg`。另建上海地铁 2号线 8A 作为城市对照。 |
+| 5. 编辑、删除 | 通过 | 编辑后卡片显示 D301／CRH2A；新增零票价临时公交，使用 Chrome 原生确认按钮删除，提示「已删除」，5 条恢复为 4 条。原始日志有 `DELETE /api/trips/5 200`。 |
+| 6. 筛选 | 通过 | 地铁筛选为 2 条、9 元、55 分钟；选北京地铁后只显示 1 条、5 元、40 分钟。导入后在准确 375px 下再次核对北京筛选为 2 条、10 元。 |
+| 7. 看板 | 通过 | 总览 4 条／564.50 元，铁路 1 条／553.50 元，地铁 2 条／9 元，公交 1 条／2 元；2024、2025、2026 年分别为 1、1、2 条。月／年图正常；全部月图 scrollWidth=590、clientWidth=323，原生横向滚动后 scrollLeft 从 267 变为 133.5。点 2026 年 10 月柱子提示地铁 1 次。常去站点仅端点，换乘站为建国门，线路按北京／上海分组。`03-trend-375.jpg`、`metro-rankings.txt`、`metro-transfer-rankings.txt`。 |
+| 8. 导入导出 | 通过 | 实际下载 `travel-log-20261026.json`（2512 字节、app=travel-log、version=1、4 条）；确认框显示追加 4 条，导入后提示「已导入 4 条」，列表 4→8，花费 564.50→1129 元，时长 2.9→5.8 小时。`export-check.json`、`04-import-375.jpg`、`import-result.txt`。 |
+| 9. 退出重登 | 通过 | 退出后等待密码框出现，确认只有登录页；重新登录显示「全部 8」，金额和时长保留。检查结束时再次退出并关闭专用标签。 |
+| 10. 深色模式 | 通过 | DevTools 临时模拟深色；DOM 背景 rgb(0,0,0)、文字 rgb(242,242,247)、页面宽 375px，目视看板和记录页正常。`05-dashboard-dark-375.jpg`、`06-records-dark-375.jpg`。完成后关闭 DevTools、恢复站点原有 125% 缩放并重置临时视口。 |
+| 11. Console／Network／服务器日志 | 待确认 | Console 初始唯一应用错误为故意输错密码的 401；重载后显示「控制台中有 0 条消息」。Network 的应用请求全部同源且成功，favicon 三次 GET 都是 200；扩展资源另列。原始 Web 日志共 56 个请求：48 个 200、5 个 201、1 个故意触发的 401，另有 Chrome DevTools 自动发现请求产生的 2 个 404。尚未擅自排除这两条；`console-errors-before-reload.txt`、`console-after-reload.txt`、`network-after-reload.txt`、`web-server.log`、`web-log-audit.json`。 |
+
+**偏差**
+
+- 业务规则、接口契约和架构无变更；没有修改静态界面，也没有开始 P2。日志更新按本任务和 AGENTS.md 的阶段记录要求执行。
+- P1.5 补充覆盖 Python 内置处理器返回的 501：先新增测试复现缺少 CORS 头，再把加头逻辑统一放入 `end_headers()`；单项由失败变为通过，最终完整 49 项通过。状态码和静态路径行为保持原样；证据 `p1.5-501-red.txt`、`backend-tests.txt`。
+- 上一轮因删除确认框阻塞而暂停；本轮恢复时旧标签和临时服务均已关闭，因此新建临时数据库完整重跑回归。删除与导入确认使用 Chrome 原生按钮，导入使用系统文件选择框，下载按实际文件核验，没有依赖此前超时的事件等待。
+- 浏览器沿用该本地站点的 125% 缩放，开始时实际 CSS 宽度小于目标；本轮已临时改为 100%，确认 375px，并在该宽度复核关键表单、显示和筛选，结束后恢复 125%。
+- 第 11 项遇到 Chrome DevTools 自动工作区探测：官方文档说明打开开发者工具检查本地网站时会请求 `/.well-known/appspecific/com.chrome.devtools.json`，未提供时的 404 可以忽略（[Chrome 官方说明](https://developer.chrome.com/docs/devtools/automatic-workspaces)）。但现有计划只明确排除浏览器扩展，因此已向用户询问验收口径，当前仍记为待确认；没有为了消除日志而新增端点、过滤原始日志或改动浏览器 flags。
+
+**运行过的检查**
+
+- 2026-10-26：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`，49 项通过（29.374 秒），完整输出见下方及 `backend-tests.txt`。
+- `node --check static/app.js`、`node --check static/dashboard.js`：退出 0。
+- `audit_scope.py`：原有 14 个测试、旧迁移、安全相关常量和函数 AST 核对通过；OpenAPI 仅四行计划标记删除；Web 静态代码、规则、架构、计划、AGENTS.md 与 main 一致；累计改动在白名单中；没有数据库、缓存或签名文件被跟踪。
+- `git diff --check main`：退出 0。
+- `verify_http.py`：实际 curl 和 CLI 检查均通过，响应见下方；专用服务停止，临时数据库已清理。
+- 附录 A：第 1～10 项通过，第 11 项待用户确认非应用 DevTools 探测的处理口径。原始日志完整保留。
+- 后端仍只使用 Python 标准库，依赖未增加；没有读取、生成或使用用户签名密钥。
+
+**完整后端测试输出**
+
+```text
+test_v0_metro_rows_become_single_leg (test_server.MigrationTest.test_v0_metro_rows_become_single_leg) ... ok
+test_v2_cookie_session_survives_v3 (test_server.MigrationTest.test_v2_cookie_session_survives_v3) ... ok
+test_authorization_duplicate_headers_are_rejected (test_server.ServerTest.test_authorization_duplicate_headers_are_rejected) ... ok
+test_authorization_never_falls_back_to_cookie (test_server.ServerTest.test_authorization_never_falls_back_to_cookie) ... ok
+test_change_password_revokes_sessions (test_server.ServerTest.test_change_password_revokes_sessions) ... ok
+test_cookie_flags (test_server.ServerTest.test_cookie_flags) ... ok
+test_cookie_lifetime_remains_fixed (test_server.ServerTest.test_cookie_lifetime_remains_fixed) ... ok
+test_cors_absent_for_no_origin_and_static (test_server.ServerTest.test_cors_absent_for_no_origin_and_static) ... ok
+test_cors_empty_and_custom_configuration (test_server.ServerTest.test_cors_empty_and_custom_configuration) ... ok
+test_cors_environment_configuration (test_server.ServerTest.test_cors_environment_configuration) ... ok
+test_cors_never_allows_wildcard (test_server.ServerTest.test_cors_never_allows_wildcard) ... ok
+test_cors_password_not_configured (test_server.ServerTest.test_cors_password_not_configured) ... ok
+test_cors_preflight_allowed_origins (test_server.ServerTest.test_cors_preflight_allowed_origins) ... ok
+test_cors_preflight_does_not_apply_to_static (test_server.ServerTest.test_cors_preflight_does_not_apply_to_static) ... ok
+test_cors_preflight_rejects_other_origins (test_server.ServerTest.test_cors_preflight_rejects_other_origins) ... ok
+test_cors_state_resets_on_keep_alive_connection (test_server.ServerTest.test_cors_state_resets_on_keep_alive_connection) ... ok
+test_cors_success_and_error_responses (test_server.ServerTest.test_cors_success_and_error_responses) ... ok
+test_cors_token_login_response (test_server.ServerTest.test_cors_token_login_response) ... ok
+test_cors_unsupported_method_response (test_server.ServerTest.test_cors_unsupported_method_response) ... ok
+test_crud (test_server.ServerTest.test_crud) ... ok
+test_export_import_roundtrip (test_server.ServerTest.test_export_import_roundtrip) ... ok
+test_favicon (test_server.ServerTest.test_favicon) ... ok
+test_legacy_metro_import (test_server.ServerTest.test_legacy_metro_import) ... ok
+test_logout (test_server.ServerTest.test_logout) ... ok
+test_meta (test_server.ServerTest.test_meta) ... ok
+test_metro_legs (test_server.ServerTest.test_metro_legs) ... ok
+test_requires_json_content_type (test_server.ServerTest.test_requires_json_content_type) ... ok
+test_requires_login (test_server.ServerTest.test_requires_login) ... ok
+test_seat_and_distance (test_server.ServerTest.test_seat_and_distance) ... ok
+test_static_files (test_server.ServerTest.test_static_files) ... ok
+test_token_and_cookie_cannot_be_interchanged (test_server.ServerTest.test_token_and_cookie_cannot_be_interchanged) ... ok
+test_token_and_cookie_revoked_by_password_change (test_server.ServerTest.test_token_and_cookie_revoked_by_password_change) ... ok
+test_token_authenticates_trips_and_session (test_server.ServerTest.test_token_authenticates_trips_and_session) ... ok
+test_token_device_name_defaults_to_empty (test_server.ServerTest.test_token_device_name_defaults_to_empty) ... ok
+test_token_device_name_validation (test_server.ServerTest.test_token_device_name_validation) ... ok
+test_token_expired_is_not_renewed (test_server.ServerTest.test_token_expired_is_not_renewed) ... ok
+test_token_issuance (test_server.ServerTest.test_token_issuance) ... ok
+test_token_login_limit_is_shared_in_reverse (test_server.ServerTest.test_token_login_limit_is_shared_in_reverse) ... ok
+test_token_rejects_malformed_bearer_with_valid_cookie (test_server.ServerTest.test_token_rejects_malformed_bearer_with_valid_cookie) ... ok
+test_token_renewal_is_atomic (test_server.ServerTest.test_token_renewal_is_atomic) ... ok
+test_token_renews_only_when_below_89_days (test_server.ServerTest.test_token_renews_only_when_below_89_days) ... ok
+test_token_requires_configured_password (test_server.ServerTest.test_token_requires_configured_password) ... ok
+test_token_requires_json (test_server.ServerTest.test_token_requires_json) ... ok
+test_token_revocation (test_server.ServerTest.test_token_revocation) ... ok
+test_token_revocation_does_not_revoke_other_sessions (test_server.ServerTest.test_token_revocation_does_not_revoke_other_sessions) ... ok
+test_token_revocation_rejects_cookie (test_server.ServerTest.test_token_revocation_rejects_cookie) ... ok
+test_token_wrong_password_shares_login_limit (test_server.ServerTest.test_token_wrong_password_shares_login_limit) ... ok
+test_validation (test_server.ServerTest.test_validation) ... ok
+test_wrong_password_and_rate_limit (test_server.ServerTest.test_wrong_password_and_rate_limit) ... ok
+
+----------------------------------------------------------------------
+Ran 49 tests in 29.374s
+
+OK
+
+```
+
+**六条 curl 演示与实际 CLI 失效检查**
+
+以下为实际响应；为便于验收同时保留了响应头，密码用占位符，令牌仅展示前 6 位。脚本将请求密码和令牌通过 curl 标准输入配置传入，不写入 URL 或持久请求文件。与故意测试 403／401 的 curl 请求对应的日志单独保存在 `curl-server.log`，未与 Web 回归日志混用。
+
+```text
+curl -sI http://127.0.0.1:8765/favicon.ico
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: image/png
+Content-Length: 2222
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-cache
+
+curl -s http://127.0.0.1:8765/api/meta
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 66
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"app": "travel-log", "api_version": 1, "server_version": "1.0.0"}
+
+curl -s -X POST -H "Content-Type: application/json" -d '{"password":"<临时密码>","device_name":"curl"}' http://127.0.0.1:8765/api/tokens
+HTTP/1.1 201 Created
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 103
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"token": "YH9M86[其余隐藏]", "token_type": "Bearer", "expires_in": 7776000}
+
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/trips
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 13
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"trips": []}
+
+curl -si -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: POST" http://127.0.0.1:8765/api/trips
+HTTP/1.1 204 No Content
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 0
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Authorization, Content-Type
+Access-Control-Max-Age: 600
+Access-Control-Allow-Origin: https://localhost
+Vary: Origin
+
+curl -si -X OPTIONS -H "Origin: https://evil.example" -H "Access-Control-Request-Method: POST" http://127.0.0.1:8765/api/trips
+HTTP/1.1 403 Forbidden
+Server: TravelLog/1.0
+Date: Sun, 25 Oct 2026 16:23:43 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 31
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"error": "来源不被允许"}
+
+额外命令行验证：实际执行 set-password 后，原 Cookie 和 Bearer 请求均返回 401。临时密码未记录。
+
+```
+
+**遗留问题和需要决定的事**
+
+- 需要确认 Chrome DevTools 自动发现的两条 404 是否按非应用请求排除；在确认前不将 P1 记为完整验收通过。
+- 正式代码审查按项目分工交给 Opus；当前实现提交为 `c691921`、`dbd66d2`。本阶段记录按当前实际结果提交；待验收口径确认后补充第 11 项结论。
+- 交审目录：`/Users/niuniu/Documents/travel-log-review/p1/`。附录 C 的提交列表、统计、完整 diff、完整测试输出及本阶段记录均在该目录；材料随本次日志提交刷新。未合并 main，未开始 P2。
