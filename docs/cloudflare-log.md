@@ -47,3 +47,14 @@
 全部截图、原始开发／回归请求日志、测试输出、敏感审查报告、合成导出文件保存在 `/Users/niuniu/Documents/travel-log-review/cloudflare/`。凭据配置日志、密码哈希文件和工具认证文件不纳入证据。
 
 正式部署信息与最终清理结果在下方追加。密码初始化前登录返回503，属于拒绝未配置认证的预期行为；用户初始化后还需用个人密码自行登录确认。Cloudflare适配尚未经过Opus审查；未合并main。
+
+## 正式发布结果
+
+- 适配提交 `7a8e727c5245b046a623430d5f500c036e48e337` 已推送私有远端 `codex/cloudflare-deploy`，未合并main。
+- 正式地址：`https://travel-log.2200735309.workers.dev`；Worker版本 `5cd14c26-2cb2-4420-b0c7-95a621572db7`。压缩包2310.75KiB，正式启动2122ms。`travel-cf-production-deploy.txt`。
+- 正式线上：根页面、platform.js／app.js／dashboard.js、favicon.ico、meta均200且安全头存在；未登录行程及未知API均401，白名单来源带指定CORS及Vary，无Allow-Credentials；允许预检204、拒绝预检403；未设置密码的登录503。`travel-cf-production-check.txt`。503提示沿用原API文字，Cloudflare实际初始化命令以部署文档为准。
+- 临时Worker `travel-log-check-20261026` 已删除，其随机测试Secret随之删除；正式部署没有PASSWORD_HASH绑定。本机测试专用 `.dev.vars` 已删除，本地验证进程已停止。
+- 发布前D1检查：行程0、区段0、会话0、失败计数0；只清理本轮新库中已知临时失败计数。`travel-cf-clean-final.txt`。
+- 发布前最终完整测试再次通过：67项、28.908秒、无失败；`travel-cf-suite-release.txt`。三项JavaScript语法检查通过。
+- 第二次敏感审查覆盖53个历史文本对象、41个跟踪路径，无风险文件路径或凭据模式命中；`travel-cf-sensitive-audit.json`。只记录位置／类型，不输出候选值。
+- 所有持久证据生成SHA-256清单 `SHA256SUMS.json`。正式密码仍由用户终端初始化：`python3 tools/cloudflare_admin.py`；已发出交接请求，未获取用户密码。用户配置前网站会显示登录页但无法登录。
