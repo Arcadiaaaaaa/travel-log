@@ -72,6 +72,68 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         self.cookie = resp.getheader("Set-Cookie").split(";")[0]
 
+    def concurrent_password_checks(self, passwords):
+        # 暂停已进入的真实校验，让同批请求先占名额或收到429，避免依赖哈希耗时。
+        self.httpd.socket.listen(16)
+        ready = threading.Barrier(10)
+        release = threading.Event()
+        progress = threading.Condition()
+        checked, completed = [], []
+        original_verify = server.verify_password
+
+        def verify(password, stored):
+            with progress:
+                checked.append(password)
+                progress.notify_all()
+            if not release.wait(10):
+                raise TimeoutError("并发校验测试未释放")
+            return original_verify(password, stored)
+
+        def request(i):
+            ready.wait(timeout=10)
+            try:
+                response, _ = self.request("POST", "/api/login" if i % 2 else "/api/tokens",
+                                           {"password": passwords[i]})
+                return response.status
+            finally:
+                with progress:
+                    completed.append(i)
+                    progress.notify_all()
+
+        with patch("server.verify_password", side_effect=verify):
+            with ThreadPoolExecutor(max_workers=9) as pool:
+                futures = [pool.submit(request, i) for i in range(9)]
+                try:
+                    ready.wait(timeout=10)
+                    with progress:
+                        reached = progress.wait_for(lambda: len(checked) + len(completed) >= 9, timeout=8)
+                finally:
+                    release.set()
+                statuses = [future.result(timeout=10) for future in futures]
+        self.assertTrue(reached, "同批请求没有全部进入校验或完成拒绝")
+        return statuses, checked
+
+    def test_concurrent_wrong_passwords_verify_at_most_five_times(self):
+        statuses, checked = self.concurrent_password_checks(["wrong-" + str(i) for i in range(9)])
+        self.assertLessEqual(len(checked), 5)
+        self.assertEqual(statuses.count(401), 5)
+        self.assertEqual(statuses.count(429), 4)
+
+    def test_concurrent_mixed_passwords_skip_verification_when_full(self):
+        for _ in range(4):
+            response, _ = self.request("POST", "/api/login", {"password": "wrong"})
+            self.assertEqual(response.status, 401)
+        passwords = [PASSWORD] + ["wrong-" + str(i) for i in range(8)]
+        statuses, checked = self.concurrent_password_checks(passwords)
+        self.assertEqual(len(checked), 1)
+        self.assertEqual(statuses.count(429), 8)
+        for password, status in zip(passwords, statuses):
+            if status == 429:
+                self.assertNotIn(password, checked)
+        accepted = [status for status in statuses if status != 429]
+        # 唯一拿到名额的请求：正确密码走 /api/tokens 为 201、/api/login 为 200，错误密码为 401。
+        self.assertIn(accepted, ([200], [201], [401]))
+
     def test_requires_login(self):
         resp, body = self.request("GET", "/api/trips")
         self.assertEqual(resp.status, 401)

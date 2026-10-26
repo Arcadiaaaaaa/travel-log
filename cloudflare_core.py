@@ -66,10 +66,7 @@ class D1Store:
     async def delete_session(self, token, kind):
         await self.query("DELETE FROM sessions WHERE token_hash=? AND kind=?", self.token_hash(token), kind)
 
-    async def too_many_failures(self, ip):
-        rows = await self.query("SELECT count(*) AS count FROM login_failures WHERE ip_hash=? AND failed_at>?", ip, time.time()-server.LOGIN_WINDOW)
-        return rows[0]["count"] >= server.LOGIN_MAX_FAILURES
-
+    # 在校验密码之前调用：名额已满返回 False；密码正确后由 clear_failures 清除。
     async def record_failure(self, ip):
         now = time.time()
         result = await self.batch([
@@ -214,15 +211,14 @@ class CloudflareApp:
         if path == "/api/session" and method == "GET":
             return self.reply(200,{"authenticated":await self.credential(headers) is not None})
         if path in ("/api/login","/api/tokens") and method == "POST":
-            if await self.store.too_many_failures(ip):
-                raise server.ApiError(429,"尝试次数过多，请 10 分钟后再试")
             data = self.read_json(headers,body)
             password = data.get("password") if isinstance(data,dict) else None
             if not self.password_hash:
-                raise server.ApiError(503,"尚未设置密码，请先在服务器上运行 python3 server.py set-password")
+                raise server.ApiError(503,"尚未设置密码，请先在本机终端运行 python3 tools/cloudflare_admin.py")
+            # D1事务先占用名额，未取得名额的请求不执行密码校验。
+            if not await self.store.record_failure(ip):
+                raise server.ApiError(429,"尝试次数过多，请 10 分钟后再试")
             if not isinstance(password,str) or not verify_password(password,self.password_hash):
-                if not await self.store.record_failure(ip):
-                    raise server.ApiError(429,"尝试次数过多，请 10 分钟后再试")
                 raise server.ApiError(401,"密码错误")
             await self.store.clear_failures(ip)
             if path == "/api/login":

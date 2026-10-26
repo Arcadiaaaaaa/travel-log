@@ -549,19 +549,16 @@ class TravelServer(ThreadingHTTPServer):
         self._failures: dict[str, list[float]] = {}
         self._failures_lock = threading.Lock()
 
-    def too_many_failures(self, ip: str) -> bool:
-        now = time.time()
+    # 在校验密码之前调用：名额已满返回 False；密码正确后由 clear_failures 清除。
+    def record_failure(self, ip: str) -> bool:
         with self._failures_lock:
+            now = time.time()
             recent = [t for t in self._failures.get(ip, []) if now - t < LOGIN_WINDOW]
-            if recent:
-                self._failures[ip] = recent
-            else:
-                self._failures.pop(ip, None)
-            return len(recent) >= LOGIN_MAX_FAILURES
-
-    def record_failure(self, ip: str):
-        with self._failures_lock:
-            self._failures.setdefault(ip, []).append(time.time())
+            self._failures[ip] = recent
+            if len(recent) >= LOGIN_MAX_FAILURES:
+                return False
+            recent.append(now)
+            return True
 
     def clear_failures(self, ip: str):
         with self._failures_lock:
@@ -696,15 +693,15 @@ class Handler(BaseHTTPRequestHandler):
     def authenticate_password(self):
         # Web 与 App 共用密码检查和同一份失败计数。
         ip = self.client_ip()
-        if self.server.too_many_failures(ip):
-            raise ApiError(429, "尝试次数过多，请 10 分钟后再试")
         data = self.read_json()
         password = data.get("password") if isinstance(data, dict) else None
         stored = self.server.db.get_setting("password_hash")
         if not stored:
             raise ApiError(503, "尚未设置密码，请先在服务器上运行 python3 server.py set-password")
+        # 先原子占用名额，避免并发请求越过限流后一起计算密码哈希。
+        if not self.server.record_failure(ip):
+            raise ApiError(429, "尝试次数过多，请 10 分钟后再试")
         if not isinstance(password, str) or not verify_password(password, stored):
-            self.server.record_failure(ip)
             raise ApiError(401, "密码错误")
         self.server.clear_failures(ip)
         return data

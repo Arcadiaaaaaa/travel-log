@@ -234,3 +234,34 @@ class CloudflareTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(statuses.count(401), 5)
         self.assertEqual(statuses.count(429), 4)
         self.assertEqual(self.db.conn.execute("SELECT count(*) FROM login_failures").fetchone()[0], 5)
+
+
+    async def test_concurrent_wrong_passwords_verify_at_most_five_times(self):
+        with patch("cloudflare_core.verify_password", wraps=server.verify_password) as verify:
+            results = await asyncio.gather(*[
+                self.request("POST", "/api/login" if i % 2 else "/api/tokens", {"password": "wrong"})
+                for i in range(9)
+            ])
+        self.assertLessEqual(verify.call_count, 5)
+        self.assertEqual(sum(r.status == 401 for r, _ in results), 5)
+        self.assertEqual(sum(r.status == 429 for r, _ in results), 4)
+
+    async def test_concurrent_correct_passwords_do_not_bypass_reserved_limit(self):
+        for _ in range(4):
+            await self.request("POST", "/api/login", {"password": "wrong"})
+        passwords = ["last-wrong"] + [self.password] * 8
+        with patch("cloudflare_core.verify_password", wraps=server.verify_password) as verify:
+            results = await asyncio.gather(*[
+                self.request("POST", "/api/login" if i % 2 else "/api/tokens", {"password": password})
+                for i, password in enumerate(passwords)
+            ])
+        self.assertEqual([r.status for r, _ in results], [401] + [429] * 8)
+        self.assertEqual(verify.call_count, 1)
+        self.assertEqual(verify.call_args.args[0], "last-wrong")
+
+    async def test_worker_password_setup_message_points_to_admin_tool(self):
+        self.app = CloudflareApp(self.db, "")
+        for path in ("/api/login", "/api/tokens"):
+            r, body = await self.request("POST", path, {"password": self.password})
+            self.assertEqual(r.status, 503)
+            self.assertIn("tools/cloudflare_admin.py", body["error"])
