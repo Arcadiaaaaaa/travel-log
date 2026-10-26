@@ -130,3 +130,7 @@ tests/               接口测试
 deploy/              systemd 与 Caddy 配置示例
 tools/make_icons.py  图标生成脚本
 ```
+
+## Cloudflare 部署
+
+可选使用 Python Workers＋D1，继续共用同一份网页和接口，原有 Python／SQLite 部署保持可用。准备、密码初始化与验证见 [Cloudflare 部署说明](docs/cloudflare.md)。

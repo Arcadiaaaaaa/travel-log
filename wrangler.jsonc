@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "travel-log",
+  "main": ".cloudflare-build/cloudflare_worker.py",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": [
+    "python_workers"
+  ],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "observability": {
+    "enabled": false
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "travel-log",
+      "database_id": "02083134-6488-416e-b9c6-8a162d1b6e45",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
+  "build": {
+    "command": "python3 tools/build_cloudflare.py",
+    "watch_dir": [
+      "cloudflare_core.py",
+      "cloudflare_crypto.py",
+      "cloudflare_worker.py",
+      "server.py"
+    ]
+  },
+  "send_metrics": false
+}

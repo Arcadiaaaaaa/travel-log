@@ -91,6 +91,16 @@
 
 做完安卓后，在同一个工程里执行 `npx cap add ios`。iOS 的页面来源 `capacitor://localhost` 已经在 CORS 默认白名单里。iOS 的计划另写。
 
+### D11　可选 Cloudflare Workers＋D1 部署（2026-10-26 用户授权）
+
+- 原有 `server.py` 与本地 SQLite 部署继续保留；Cloudflare 使用 Python Worker 请求入口、D1 持久数据库，同一份 `static/`，API 与业务规则不变。
+- 仅此部署适配允许官方 `workers-py`／运行时 SDK、Wrangler 及其构建工具依赖；版本在 `pyproject.toml`、`uv.lock`、`pylock.toml`、`package-lock.json` 锁定。原有 Python 服务仍然只用标准库。
+- Python Worker 的 WASM 运行时缺少 `hashlib.pbkdf2_hmac`。用户另行授权仅 Cloudflare 适配使用 `cryptography`，采用 Pyodide 支持的精确版本；保持 PBKDF2-HMAC-SHA256、600000次、16字节随机盐、恒定时间比较和现有哈希格式，不自行降低参数。
+- Worker临时文件系统不保存业务数据。D1使用 `cloudflare/migrations/` 中独立的追加式SQL迁移，原服务的 `MIGRATIONS` 及已有迁移不改。行程与区段写入、整批导入由D1事务保证原子性；内部批次关联字段不进入API响应。
+- 生产密码哈希作为 `PASSWORD_HASH` Worker Secret；用户在本机交互终端输入密码，明文不离开本机。会话额外绑定密码版本指纹，修改Secret后旧Cookie和令牌即失效；D1只存会话令牌SHA-256。
+- 登录失败计数保存在D1，跨Worker实例共用，不以进程内字典限流；只保存限流所需IP哈希及时间，不加统计或埋点。认证期限、CORS、安全头及Web行为继续按原契约。
+- 只打包明确列出的运行模块及锁定依赖，静态目录原样上传；不上传本地数据库、虚拟环境、测试秘密或个人行程。配额不足时先报告，不降安全参数，不自行开通付费。
+
 ## 3. 认证规则
 
 | | Web | App |

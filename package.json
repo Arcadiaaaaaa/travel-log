@@ -1,0 +1,11 @@
+{
+  "name": "travel-log-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "cf:dev": "uv run pywrangler dev",
+    "cf:deploy": "uv run pywrangler deploy",
+    "cf:migrate": "wrangler d1 migrations apply travel-log --remote"
+  },
+  "devDependencies": {"wrangler": "4.152.0"}
+}

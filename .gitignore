@@ -11,3 +11,17 @@ mobile/android/keystore.properties
 *.jks
 *.keystore
 .DS_Store
+
+# Cloudflare 本地工具、状态与秘密
+node_modules/
+.venv/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+.python-version
+python_modules/
+
+.venv-workers/
+.cloudflare-build/
