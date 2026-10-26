@@ -87,13 +87,14 @@ function renderDashboard() {
   const root = $("#dashboard");
   hideTip();
   const thisYear = String(new Date().getFullYear());
-  const years = [...new Set(state.trips.map((t) => t.depart_at.slice(0, 4)))].sort().reverse();
+  const knownTrips = state.trips.filter((t) => Object.hasOwn(TMAP, t.transport));
+  const years = [...new Set(knownTrips.map((t) => t.depart_at.slice(0, 4)))].sort().reverse();
   if (dash.year === null) dash.year = years.includes(thisYear) ? thisYear : "all";
   if (dash.year !== "all" && !years.includes(dash.year)) dash.year = "all";
 
   const section = SECTIONS[dash.section];
   // scoped：本页签（及地铁城市）范围内的全部年份；trips：再按年份筛选
-  let scoped = state.trips.filter((t) => section.types.includes(t.transport));
+  let scoped = knownTrips.filter((t) => section.types.includes(t.transport));
   let cityNav = null;
   if (dash.section === "metro") {
     const cities = byCount(tally(scoped, (t) => [t.network]));

@@ -20,6 +20,7 @@
     <form id="login-form" class="login-card">
       <img src="/icons/icon-192.png" alt="" class="login-icon" width="72" height="72">
       <h1>旅行记录</h1>
+      <input type="url" id="login-server" inputmode="url" autocomplete="url" placeholder="https://你的服务器地址" aria-label="服务器地址" hidden>
       <input type="password" id="login-password" placeholder="密码" autocomplete="current-password" required>
       <button type="submit" class="btn primary">登录</button>
       <p class="error" id="login-error" role="alert"></p>
@@ -31,6 +32,10 @@
       <h1 id="view-title">旅行记录</h1>
       <button type="button" id="menu-btn" class="icon-btn" aria-label="更多操作">···</button>
     </header>
+    <div id="connection-status" class="connection-status" role="status" hidden>
+      <span id="connection-message"></span>
+      <button type="button" class="link" id="retry-btn">重试</button>
+    </div>
     <div id="records">
       <section class="stats" id="stats" aria-label="统计"></section>
       <nav class="filters" id="filters" aria-label="按交通方式筛选"></nav>
@@ -117,15 +122,22 @@
 
   <dialog id="menu-dialog" class="sheet menu">
     <div class="menu-list">
+      <div id="native-info" class="native-info" hidden>
+        <p id="menu-server"></p>
+        <p id="native-version"></p>
+      </div>
       <button type="button" class="menu-item" id="export-btn">导出数据（JSON）</button>
       <button type="button" class="menu-item" id="import-btn">从 JSON 导入</button>
       <button type="button" class="menu-item danger-text" id="logout-btn">退出登录</button>
+      <button type="button" class="menu-item danger-text" id="switch-server-btn" hidden>切换服务器</button>
     </div>
     <button type="button" class="menu-item cancel" data-close>取消</button>
   </dialog>
 
   <input type="file" id="import-file" accept="application/json,.json" hidden>
   <div id="toast" class="toast" role="status" hidden></div>
+  <!-- native-bridge -->
+  <script src="/platform.js"></script>
   <script src="/app.js"></script>
   <script src="/dashboard.js"></script>
 </body>

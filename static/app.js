@@ -59,24 +59,29 @@ class ApiError extends Error {
 }
 
 async function api(method, path, body) {
-  const opts = { method, headers: {}, credentials: "same-origin" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  const opts = { method, headers: { ...Platform.authHeaders() }, credentials: Platform.isNative ? "omit" : "same-origin", signal: controller.signal };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
   let res;
-  try {
-    res = await fetch(path, opts);
-  } catch {
-    throw new ApiError("网络连接失败，请检查网络", 0);
-  }
   let data = null;
   try {
-    data = await res.json();
+    res = await fetch(Platform.apiBase() + path, opts);
+    try {
+      data = await res.json();
+    } catch (err) {
+      if (err.name !== "SyntaxError") throw err;
+    }
   } catch {
-    /* 非 JSON 响应 */
+    throw new ApiError(controller.signal.aborted ? "连接超时，请检查网络" : "网络连接失败，请检查网络", 0);
+  } finally {
+    clearTimeout(timer);
   }
   if (res.status === 401 && path !== "/api/login") {
+    await Platform.onUnauthorized();
     showLogin();
     throw new ApiError("登录已过期，请重新登录", 401);
   }
@@ -328,6 +333,7 @@ function renderList(trips) {
 }
 
 function tripCard(t) {
+  const known = Object.hasOwn(TMAP, t.transport);
   const meta = tripMeta(t);
   const transfers = t.transport === "metro" ? t.legs.length - 1 : 0;
   const hasRoute = t.from_place || t.to_place;
@@ -337,7 +343,7 @@ function tripCard(t) {
     h(
       "div",
       { class: "trip-top" },
-      h("span", { class: `badge t-${t.transport}` }, TMAP[t.transport].short),
+      h("span", { class: `badge t-${known ? t.transport : "unknown"}` }, known ? TMAP[t.transport].short : t.transport),
       meta && h("span", { class: "meta" }, meta),
       h("span", { class: "price" }, fmtPrice(t.price_cents)),
     ),
@@ -395,7 +401,9 @@ function currentSeat() {
 
 // 切换交通方式时重建选项；新选项里仍有原坐席（如动车↔高铁）就保留
 function buildSeatOptions(transport, keep) {
-  const options = SEAT_OPTIONS[transport] || [];
+  const options = [...(SEAT_OPTIONS[transport] || [])];
+  if (state.editing && transport === state.editing.transport && TRAIN_TYPES.has(transport) &&
+      keep === state.editing.seat && keep && !options.includes(keep)) options.push(keep);
   $("#seat-field").hidden = !options.length;
   selectedSeat = options.includes(keep) ? keep : "";
   $("#seat-options").replaceChildren(
@@ -634,6 +642,10 @@ function readLegs() {
 }
 
 function openEditor(trip) {
+  if (trip && !Object.hasOwn(TMAP, trip.transport)) {
+    toast("这条记录需要新版 App 才能编辑");
+    return;
+  }
   state.editing = trip || null;
   tripForm.reset();
   $("#trip-error").textContent = "";
@@ -654,7 +666,7 @@ function openEditor(trip) {
   buildMetroFields(trip);
   buildSeatOptions(f.transport.value, trip ? trip.seat : "");
   applyHints();
-  tripDialog.showModal();
+  showDialog(tripDialog);
   tripDialog.querySelector(".sheet-body").scrollTop = 0;
 }
 
@@ -778,23 +790,7 @@ function todayStamp() {
 async function exportData() {
   const data = await api("GET", "/api/export");
   const name = `travel-log-${todayStamp()}.json`;
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const file = new File([blob], name, { type: "application/json" });
-  // 手机上用系统分享面板（可存到“文件”App），电脑上直接下载
-  if (matchMedia("(pointer: coarse)").matches && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: name });
-      return;
-    } catch (err) {
-      if (err.name === "AbortError") return;
-    }
-  }
-  const url = URL.createObjectURL(blob);
-  const a = h("a", { href: url, download: name });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  await Platform.saveFile(name, JSON.stringify(data, null, 2), "application/json");
 }
 
 async function importFile(file) {
@@ -816,7 +812,34 @@ async function importFile(file) {
   await loadTrips();
 }
 
-$("#menu-btn").addEventListener("click", () => menuDialog.showModal());
+const dialogStack = [];
+
+function showDialog(dialog) {
+  dialog.showModal();
+  const previous = dialogStack.indexOf(dialog);
+  if (previous >= 0) dialogStack.splice(previous, 1);
+  dialogStack.push(dialog);
+}
+
+Platform.onBackButton(() => {
+  while (dialogStack.length) {
+    const dialog = dialogStack.pop();
+    if (!dialog.open) continue;
+    dialog.close();
+    return true;
+  }
+  if (!$("#chart-tip").hidden) {
+    hideTip();
+    return true;
+  }
+  if (state.view === "dash") {
+    setView("records");
+    return true;
+  }
+  return false;
+});
+
+$("#menu-btn").addEventListener("click", () => showDialog(menuDialog));
 
 $("#export-btn").addEventListener("click", async () => {
   menuDialog.close();
@@ -846,7 +869,17 @@ $("#import-file").addEventListener("change", async (e) => {
 $("#logout-btn").addEventListener("click", async () => {
   menuDialog.close();
   try {
-    await api("POST", "/api/logout");
+    await Platform.signOut();
+  } finally {
+    showLogin();
+  }
+});
+
+$("#switch-server-btn").addEventListener("click", async () => {
+  if (!confirm("退出登录并清除服务器地址？")) return;
+  menuDialog.close();
+  try {
+    await Platform.forgetServer();
   } finally {
     showLogin();
   }
@@ -864,10 +897,13 @@ function showLogin() {
   $("#main").hidden = true;
   $("#login").hidden = false;
   $("#login-password").value = "";
-  $("#login-password").focus();
+  $("#connection-status").hidden = true;
+  $("#login-server").value = Platform.apiBase();
+  (Platform.isNative && !Platform.apiBase() ? $("#login-server") : $("#login-password")).focus();
 }
 
 function showMain() {
+  $("#menu-server").textContent = `服务器：${Platform.serverLabel()}`;
   $("#login").hidden = true;
   $("#main").hidden = false;
 }
@@ -878,11 +914,12 @@ $("#login-form").addEventListener("submit", async (e) => {
   btn.disabled = true;
   $("#login-error").textContent = "";
   try {
-    await api("POST", "/api/login", { password: $("#login-password").value });
+    await Platform.signIn($("#login-server").value, $("#login-password").value);
     showMain();
-    await loadTrips();
+    await loadServerData();
   } catch (err) {
-    $("#login-error").textContent = err.message;
+    if (Platform.isNative && Platform.hasCredentials() && !$("#main").hidden) showConnectionError(err);
+    else $("#login-error").textContent = err.message;
   } finally {
     btn.disabled = false;
   }
@@ -893,6 +930,7 @@ $("#add-btn").addEventListener("click", () => openEditor(null));
 async function loadTrips() {
   const data = await api("GET", "/api/trips");
   state.trips = data.trips;
+  $("#connection-status").hidden = true;
   render();
 }
 
@@ -905,17 +943,58 @@ function toast(message) {
   toastTimer = setTimeout(() => (el.hidden = true), 2200);
 }
 
+async function loadServerData() {
+  if (Platform.isNative) {
+    const meta = await api("GET", "/api/meta");
+    if (!meta || meta.app !== "travel-log") throw new ApiError("这不是旅行记录服务器", 200);
+    if (typeof meta.api_version === "number" && meta.api_version > 1) throw new ApiError("服务器版本较新，请更新 App", 200);
+    if (meta.api_version !== 1) throw new ApiError("服务器版本过旧，请先更新服务器", 200);
+  }
+  await loadTrips();
+}
+
+function showConnectionError(err) {
+  $("#connection-message").textContent = err.status === 0 && err.message !== "连接超时，请检查网络" ? "无法连接到服务器" : err.message;
+  $("#connection-status").hidden = false;
+}
+
+$("#retry-btn").addEventListener("click", async () => {
+  const button = $("#retry-btn");
+  button.disabled = true;
+  try {
+    await loadServerData();
+  } catch (err) {
+    if (err.status !== 401) showConnectionError(err);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function boot() {
   buildTransportOptions();
+  $("#login-server").hidden = !Platform.isNative;
+  $("#login-form").noValidate = Platform.isNative;
+  $("#native-info").hidden = !Platform.isNative;
+  $("#switch-server-btn").hidden = !Platform.isNative;
   try {
-    const session = await api("GET", "/api/session");
-    if (!session.authenticated) return showLogin();
+    await Platform.init();
+    if (Platform.isNative) {
+      if (!Platform.hasCredentials()) return showLogin();
+    } else {
+      const session = await api("GET", "/api/session");
+      if (!session.authenticated) return showLogin();
+    }
     showMain();
-    await loadTrips();
+    await loadServerData();
   } catch (err) {
     if (err.status !== 401) {
-      showLogin();
-      $("#login-error").textContent = err.message;
+      if (Platform.isNative && Platform.hasCredentials()) {
+        showMain();
+        showConnectionError(err);
+      } else {
+        showLogin();
+        $("#login-error").textContent = err.message;
+      }
     }
   }
 }
