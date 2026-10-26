@@ -372,3 +372,161 @@ Cache-Control: no-store
 - 用户明确回复「允许排除，保留原始证据」。该确认适用于本轮第 11 项中 `GET /.well-known/appspecific/com.chrome.devtools.json` 的两条 404。
 - `web-server.log` 的全部 56 条请求保持原样：48 个 200、5 个 201、1 个故意输错密码产生的 401，以及上述 2 个 DevTools 探测 404。`web-log-audit.json` 明列原始错误与用户确认的例外，没有删除或掩盖记录。
 - 本次仅更新验收记录和交审材料；服务端、测试、README、接口文件均与已通过 49 项测试的 `dbd66d2` 内容一致。P1 在此停下，等待 Opus 审查。
+
+### P1 验收材料补齐（分支 `android/p1-server-auth`，2026-10-26）
+
+**状态**：用户已确认 P1 代码通过 Opus 审查。本次仅重新执行验收并补充材料；服务器、测试、README、接口契约及前端均不改，停在 P1。
+
+**完成情况**（对应本次要求及第 4 节「P1 验收」）
+
+- [x] 重新运行计划中的全部六条 curl：favicon 200、meta 200、令牌签发 201、Bearer 读取行程 200、白名单预检 204、非白名单预检 403。完整响应输出贴在下方；本次专用临时数据库与 Web 回归库相互独立，临时密码未记录，令牌只显示前 6 位。
+- [x] 附录 A 的全部 11 条 Web 回归重新执行，逐条证据见下表。第 11 条以本轮完整 `web-server.log` 为准：共 50 个请求，42 个 200、5 个 201、1 个故意输错密码的 401；另有 2 个 Chrome DevTools 非应用探测 404，按本对话已经确认的例外单列并保留。
+- [x] 后端全量测试重新运行，49 项全部通过（26.663 秒），没有修改现有测试；完整输出为本轮目录的 `backend-tests.txt`。
+- [x] 截图、导出 JSON、原始服务器日志、Console／Network 观察及核对结果保存在 `/Users/niuniu/Documents/travel-log-review/p1/acceptance-20261026-101501/`，不覆盖之前的交审材料。
+- [x] 本记录在既有日志末尾追加，已有记录逐字保留；本次单独以 `docs:` 提交。相对开始验收时的 `ee75a4d53ca867087e4d3e4b9932b079924c9eb6`，仓库仅允许本日志发生变化。
+
+**附录 A Web 回归逐项证据**
+
+使用 Chrome 专用测试标签、临时数据库和测试密码。开始前将该站点缩放临时调整为 100%，实测 `innerWidth=375`、`bodyWidth=375`、`innerHeight=812`（`viewport.json`），全部交互都在该宽度执行；结束后恢复原有 125% 缩放并重置视口。
+
+| 项目 | 结果 | 本轮实际输入、观察和证据 |
+|---|---|---|
+| 1. 登录 | 通过 | 故意输错密码，提示「密码错误」；正确临时密码进入空列表。日志只有 1 条与此对应的 `/api/login` 401。 |
+| 2. 新增高铁 | 通过 | G1、CR400AF、二等座、553.50 元、1318.5 公里；卡片显示车次、车型、坐席及「1,318.5公里」。跨年行程 2025-12-31 23:30→2026-01-01 01:00 显示「次日 01:00 · 1小时30分」。截图 `01-high-speed.jpg`。 |
+| 3. 车次推断 | 通过 | G1 改为 D301 后，动车组 radio.checked=true，二等座仍为 true；车型改为 CRH2A 后保存，卡片实际更新为「D301 · CRH2A · 二等座」。 |
+| 4. 地铁两段换乘 | 通过 | 新增北京地铁、2号线和1号线、6B 车型；新增第 2 段时上车站为复兴门，第 1 段下车站改为建国门后，第 2 段同步为建国门；保存卡片显示「换乘 1 次」。`metro-linkage.txt`、`02-metro-transfer.jpg`。另新增上海地铁2号线8A，为城市筛选提供对照。 |
+| 5. 编辑和删除 | 通过 | 上述高铁编辑后显示 D301／CRH2A；另建零票价临时公交，用原生确认框确认删除后提示「已删除」，5 条恢复到 4 条。服务器日志 `DELETE /api/trips/5 200`。 |
+| 6. 筛选 | 通过 | 地铁筛选显示 2 条／9 元／55 分钟；再选北京地铁，只有 1 条／5 元／40 分钟，卡片为西直门→国贸。 |
+| 7. 看板 | 通过 | 总览4条564.50元、铁路1条553.50元、公交1条2元、地铁2条9元。切换2024／2025／2026年，分别1／1／2条。年图显示2024～2026；全部月图宽590px、容器323px，原生横向滑动使scrollLeft从267变为133.5；点2026年10月柱子提示「地铁 1 次」。常去站点仅起终点，换乘站排行为建国门，线路按北京／上海分组。`year-summaries.json`、`tab-summaries.json`、`trend-scroll.json`、`03-trend.jpg`、`metro-rankings.txt`、`metro-transfer-ranking.txt`。 |
+| 8. 导入导出 | 通过 | 实际导出的4条记录下载为 `travel-log-20261026 (1).json`，2503字节；app=travel-log、version=1、金额合计56450分。系统文件选择框选取该新文件，确认框显示追加4条，导入后提示「已导入 4 条」，列表4→8、花费564.50→1129元、时长2.9→5.8小时。`exported-trips.json`、`export-check.json`、`import-result.txt`、`04-import.jpg`。 |
+| 9. 退出重登 | 通过 | 退出后等待并观察到密码框与登录按钮；重新登录后仍显示8条、1129元、5.8小时。检查结束再次退出。 |
+| 10. 深色模式 | 通过 | DevTools临时模拟深色；实测375px、背景rgb(0,0,0)、文字rgb(242,242,247)，目视看板和记录页正常。`dark-mode.json`、`05-dashboard-dark.jpg`、`06-records-dark.jpg`。 |
+| 11. 开发者工具和服务器日志 | 通过（沿用已确认的非应用探测例外） | Console重载前的应用错误为故意输错密码的401，另有浏览器扩展错误／警告；重载后显示「控制台中有0条消息」。Network里应用请求均同源且成功，扩展资源单列；favicon两次GET均200。完整服务器日志仅有下列3条4xx：故意登录401，以及2条已确认排除的DevTools探测404，没有其他4xx/5xx。`console-before-reload.txt`、`console-after-reload.txt`、`network-after-reload.txt`、`web-server.log`、`web-log-audit.json`。 |
+
+**六条 curl 的实际输出**
+
+显示命令采用计划中的写法；执行脚本通过 curl 标准输入配置传入密码／Authorization，并额外保留响应头用于核对状态。下面仅去掉行尾空格，密码以占位符表示、令牌只保留前6位；原始脱敏文本为本轮的 `curl-demo.txt`。实际请求、状态和响应体均来自本轮临时服务。
+
+```text
+curl -sI http://127.0.0.1:8765/favicon.ico
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: image/png
+Content-Length: 2222
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-cache
+
+curl -s http://127.0.0.1:8765/api/meta
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 66
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"app": "travel-log", "api_version": 1, "server_version": "1.0.0"}
+
+curl -s -X POST -H "Content-Type: application/json" -d '{"password":"<临时密码>","device_name":"curl"}' http://127.0.0.1:8765/api/tokens
+HTTP/1.1 201 Created
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 103
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"token": "BvkPnb[其余隐藏]", "token_type": "Bearer", "expires_in": 7776000}
+
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/trips
+HTTP/1.1 200 OK
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 13
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"trips": []}
+
+curl -si -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: POST" http://127.0.0.1:8765/api/trips
+HTTP/1.1 204 No Content
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 0
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE
+Access-Control-Allow-Headers: Authorization, Content-Type
+Access-Control-Max-Age: 600
+Access-Control-Allow-Origin: https://localhost
+Vary: Origin
+
+curl -si -X OPTIONS -H "Origin: https://evil.example" -H "Access-Control-Request-Method: POST" http://127.0.0.1:8765/api/trips
+HTTP/1.1 403 Forbidden
+Server: TravelLog/1.0
+Date: Mon, 26 Oct 2026 02:15:56 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 31
+Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cache-Control: no-store
+{"error": "来源不被允许"}
+
+额外命令行验证：实际执行 set-password 后，原 Cookie 和 Bearer 请求均返回 401。临时密码未记录。
+```
+
+**第 11 条服务器日志核对**
+
+以下摘录本轮原始日志中全部 4xx，以及 favicon 请求；完整日志不删改，保存在本轮 `web-server.log`。所有50条请求按状态计数的结果为：200×42、201×5、401×1、404×2，无5xx。Chrome探测路径为 `/.well-known/appspecific/com.chrome.devtools.json`，沿用用户在本对话明确回复「允许排除，保留原始证据」的处理方式。
+
+```text
+2026-10-26 10:17:47,776 INFO 127.0.0.1 "POST /api/login HTTP/1.1" 401 -
+2026-10-26 10:23:18,199 INFO 127.0.0.1 "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+2026-10-26 10:24:28,953 INFO 127.0.0.1 "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+2026-10-26 10:24:29,165 INFO 127.0.0.1 "GET /favicon.ico HTTP/1.1" 200 -
+2026-10-26 10:24:29,166 INFO 127.0.0.1 "GET /favicon.ico HTTP/1.1" 200 -
+```
+
+**偏差**
+
+- 没有代码、测试、依赖或契约变更。用户已告知代码通过Opus审查，本次只增加验收记录；所有旧材料保留，本轮使用新的证据子目录。
+- Chrome原生确认框用于删除与导入，系统文件选择框用于导入；没有依赖此前不可靠的浏览器事件等待。浏览器因同名文件存在而将下载文件加上`(1)`，实际导入的是本轮新下载文件，内容和金额均已核对。
+- 第11条沿用此前用户确认的非应用DevTools探测例外，服务器原始日志、全部3条4xx及扩展Console来源均保留，没有修改服务器来消除探测日志，也没有过滤原始日志。除该已确认例外外，附录A无未通过项。
+
+**运行过的检查**
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 verify_http.py`（仓库外的本轮验收脚本）：六条计划curl均通过；额外用实际`set-password`验证旧Cookie和令牌均401，未使用业务数据库。
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`：49项全部通过，完整输出在本轮目录的`backend-tests.txt`；摘要如下。
+
+```text
+----------------------------------------------------------------------
+Ran 49 tests in 26.663s
+
+OK
+```
+
+- `git diff ee75a4d -- . ':(exclude)docs/android-log.md'`：无输出，确认包括server.py、tests、README、OpenAPI和static在内的其余文件未修改。
+- 附录A：11项通过，观察值和证据逐项列于上表；第11条以原始服务器日志和状态计数为准，例外单列。
+- `git diff --check`：提交前通过；本次独立提交只包含本日志的追加内容。
+- 专用测试标签和临时服务均已关闭，临时数据库已清理，浏览器站点缩放和视口已恢复。
+
+**遗留问题和需要决定的事**
+
+- 无新增实现问题。本次仅补验收材料；P1代码审查结论采用用户已确认的信息。
+- 按本次指示停在P1，不合并分支，不开始P2。后续阶段由用户决定。
