@@ -143,7 +143,7 @@ OK
 
 ### P1 服务器元信息、令牌认证与 CORS（分支 `android/p1-server-auth`，2026-10-26）
 
-**状态**：P1.0～P1.7 已实现，49 项后端测试及六条 curl 演示通过；附录 A 第 1～10 项通过，第 11 项存在 Chrome 开发者工具自动探测的两条 404，验收口径待用户确认。尚未宣称 P1 完整验收通过，未开始 P2。
+**状态**：P1.0～P1.7 已实现，49 项后端测试及六条 curl 演示通过；附录 A 的 11 项均通过。第 11 项按用户于 2026-10-26 确认的口径，排除两条 Chrome DevTools 自动探测 404，完整保留原始证据。P1 执行与验收已完成，提交供 Opus 审查，未开始 P2。
 
 **完成情况**（对应 P1 计划和验收）
 
@@ -157,8 +157,8 @@ OK
 - [x] P1.6：README 增加 `TRAVEL_CORS_ORIGINS` 及认证说明；OpenAPI 仅删除三个接口和 bearerAuth 上四行 `x-status: planned`，文本对比确认无其他契约改动。
 - [x] P1.7：`PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`：49 项全部通过（29.374 秒）；原有 14 个测试方法 AST 完全相同，仅新增 35 个，辅助 `request()` 增加请求头支持。
 - [x] 六条 curl 演示：200／200／201／200／204／403，原始响应头和脱敏响应体见下方。实际运行命令行 `set-password` 后，原 Cookie 和 Bearer 请求均返回 401；测试只用临时数据库和临时密码，未记录密码，令牌仅保留前 6 位。
-- [x] 本阶段证据按模板写入本日志；附录 C 材料保存在持久交审目录，所有待确认项如实列出。
-- [ ] 附录 A 全部通过：第 1～10 项通过；第 11 项待确认 Chrome DevTools 探测 404 是否按非应用请求排除，详见下表和「偏差」。
+- [x] 本阶段证据按模板写入本日志；附录 C 材料保存在持久交审目录，验收例外及用户确认如实列出。
+- [x] 附录 A 全部 11 项通过：第 11 项按用户确认排除两条 Chrome DevTools 非应用探测 404，完整原始日志保留，详见下表和「偏差」。
 
 **P1.7 测试主题与证据**
 
@@ -192,7 +192,7 @@ OK
 | 8. 导入导出 | 通过 | 实际下载 `travel-log-20261026.json`（2512 字节、app=travel-log、version=1、4 条）；确认框显示追加 4 条，导入后提示「已导入 4 条」，列表 4→8，花费 564.50→1129 元，时长 2.9→5.8 小时。`export-check.json`、`04-import-375.jpg`、`import-result.txt`。 |
 | 9. 退出重登 | 通过 | 退出后等待密码框出现，确认只有登录页；重新登录显示「全部 8」，金额和时长保留。检查结束时再次退出并关闭专用标签。 |
 | 10. 深色模式 | 通过 | DevTools 临时模拟深色；DOM 背景 rgb(0,0,0)、文字 rgb(242,242,247)、页面宽 375px，目视看板和记录页正常。`05-dashboard-dark-375.jpg`、`06-records-dark-375.jpg`。完成后关闭 DevTools、恢复站点原有 125% 缩放并重置临时视口。 |
-| 11. Console／Network／服务器日志 | 待确认 | Console 初始唯一应用错误为故意输错密码的 401；重载后显示「控制台中有 0 条消息」。Network 的应用请求全部同源且成功，favicon 三次 GET 都是 200；扩展资源另列。原始 Web 日志共 56 个请求：48 个 200、5 个 201、1 个故意触发的 401，另有 Chrome DevTools 自动发现请求产生的 2 个 404。尚未擅自排除这两条；`console-errors-before-reload.txt`、`console-after-reload.txt`、`network-after-reload.txt`、`web-server.log`、`web-log-audit.json`。 |
+| 11. Console／Network／服务器日志 | 通过（用户确认例外） | Console 初始唯一应用错误为故意输错密码的 401；重载后显示「控制台中有 0 条消息」。Network 的应用请求全部同源且成功，favicon 三次 GET 都是 200；扩展资源另列。原始 Web 日志共 56 个请求：48 个 200、5 个 201、1 个故意触发的 401，另有 Chrome DevTools 自动发现请求产生的 2 个 404。用户于 2026-10-26 明确回复「允许排除，保留原始证据」，本轮据此排除这两条非应用探测请求，原始日志未删改；`console-errors-before-reload.txt`、`console-after-reload.txt`、`network-after-reload.txt`、`web-server.log`、`web-log-audit.json`。 |
 
 **偏差**
 
@@ -200,7 +200,7 @@ OK
 - P1.5 补充覆盖 Python 内置处理器返回的 501：先新增测试复现缺少 CORS 头，再把加头逻辑统一放入 `end_headers()`；单项由失败变为通过，最终完整 49 项通过。状态码和静态路径行为保持原样；证据 `p1.5-501-red.txt`、`backend-tests.txt`。
 - 上一轮因删除确认框阻塞而暂停；本轮恢复时旧标签和临时服务均已关闭，因此新建临时数据库完整重跑回归。删除与导入确认使用 Chrome 原生按钮，导入使用系统文件选择框，下载按实际文件核验，没有依赖此前超时的事件等待。
 - 浏览器沿用该本地站点的 125% 缩放，开始时实际 CSS 宽度小于目标；本轮已临时改为 100%，确认 375px，并在该宽度复核关键表单、显示和筛选，结束后恢复 125%。
-- 第 11 项遇到 Chrome DevTools 自动工作区探测：官方文档说明打开开发者工具检查本地网站时会请求 `/.well-known/appspecific/com.chrome.devtools.json`，未提供时的 404 可以忽略（[Chrome 官方说明](https://developer.chrome.com/docs/devtools/automatic-workspaces)）。但现有计划只明确排除浏览器扩展，因此已向用户询问验收口径，当前仍记为待确认；没有为了消除日志而新增端点、过滤原始日志或改动浏览器 flags。
+- 第 11 项遇到 Chrome DevTools 自动工作区探测：官方文档说明打开开发者工具检查本地网站时会请求 `/.well-known/appspecific/com.chrome.devtools.json`，未提供时的 404 可以忽略（[Chrome 官方说明](https://developer.chrome.com/docs/devtools/automatic-workspaces)）。现有计划只明确排除浏览器扩展，因此先询问验收口径；用户于 2026-10-26 明确回复「允许排除，保留原始证据」。本轮仅将这两条指定路径的 404 作为非应用请求排除，原始日志完整保留；没有新增服务器端点、过滤原始日志或改动浏览器 flags。
 
 **运行过的检查**
 
@@ -209,7 +209,7 @@ OK
 - `audit_scope.py`：原有 14 个测试、旧迁移、安全相关常量和函数 AST 核对通过；OpenAPI 仅四行计划标记删除；Web 静态代码、规则、架构、计划、AGENTS.md 与 main 一致；累计改动在白名单中；没有数据库、缓存或签名文件被跟踪。
 - `git diff --check main`：退出 0。
 - `verify_http.py`：实际 curl 和 CLI 检查均通过，响应见下方；专用服务停止，临时数据库已清理。
-- 附录 A：第 1～10 项通过，第 11 项待用户确认非应用 DevTools 探测的处理口径。原始日志完整保留。
+- 附录 A：11 项全部通过；第 11 项包含上述用户确认的两条非应用 DevTools 探测例外。原始日志完整保留。
 - 后端仍只使用 Python 标准库，依赖未增加；没有读取、生成或使用用户签名密钥。
 
 **完整后端测试输出**
@@ -363,6 +363,12 @@ Cache-Control: no-store
 
 **遗留问题和需要决定的事**
 
-- 需要确认 Chrome DevTools 自动发现的两条 404 是否按非应用请求排除；在确认前不将 P1 记为完整验收通过。
-- 正式代码审查按项目分工交给 Opus；当前实现提交为 `c691921`、`dbd66d2`。本阶段记录按当前实际结果提交；待验收口径确认后补充第 11 项结论。
+- 验收口径已确认，没有待决定的实现问题；正式代码审查仍按项目分工交给 Opus。
+- 实现提交为 `c691921`、`dbd66d2`；此前日志提交为 `4041dde`，本次补记用户确认和最终验收结论。
 - 交审目录：`/Users/niuniu/Documents/travel-log-review/p1/`。附录 C 的提交列表、统计、完整 diff、完整测试输出及本阶段记录均在该目录；材料随本次日志提交刷新。未合并 main，未开始 P2。
+
+**验收口径确认（2026-10-26）**
+
+- 用户明确回复「允许排除，保留原始证据」。该确认适用于本轮第 11 项中 `GET /.well-known/appspecific/com.chrome.devtools.json` 的两条 404。
+- `web-server.log` 的全部 56 条请求保持原样：48 个 200、5 个 201、1 个故意输错密码产生的 401，以及上述 2 个 DevTools 探测 404。`web-log-audit.json` 明列原始错误与用户确认的例外，没有删除或掩盖记录。
+- 本次仅更新验收记录和交审材料；服务端、测试、README、接口文件均与已通过 49 项测试的 `dbd66d2` 内容一致。P1 在此停下，等待 Opus 审查。
