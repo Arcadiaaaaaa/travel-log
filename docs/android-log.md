@@ -530,3 +530,92 @@ OK
 
 - 无新增实现问题。本次仅补验收材料；P1代码审查结论采用用户已确认的信息。
 - 按本次指示停在P1，不合并分支，不开始P2。后续阶段由用户决定。
+
+### P2 前端平台层（分支 `android/p2-platform`，2026-10-26）
+
+**完成情况**（对应 P2.1～P2.3 及本阶段验收）
+
+- [x] P1 前置条件：用户已确认 P1 代码通过 Opus 审查；P1 最后验收记录为 `9a70912`。本地 `main` 从 `16b9fb3` 快进到该提交，再建立本阶段分支。实现提交：`0754987 feat: 接入前端平台层与应用登录流程`。
+- [x] P2.1：新增 `static/platform.js`，按既定 `Platform` 接口实现 Web Cookie／App Bearer 两条路径，只有该文件读取 `window.TravelNative`。`index.html` 在 `app.js` 前保留 `<!-- native-bridge -->` 标记并加载平台层。没有新依赖或接口扩展。
+- [x] App 登录先规范化来源、检查 HTTPS（仅调试桥允许 HTTP），再以 10 秒超时探测 `/api/meta`；校验应用标识和版本之后才发密码到 `/api/tokens`。保存键为 `serverOrigin`、`authToken`；退出尽量撤销远端令牌，再清本地令牌；401 只清令牌；切换服务器同时清来源。证据：`platform-tests.cjs` 28 项，涵盖错误来源、非 JSON、版本不兼容、断网、超时、存储失败、退出和导出。
+- [x] P2.2：`api()` 使用平台来源和认证头，Web `same-origin`／App `omit`，15 秒超时覆盖请求及响应体读取；401 先等待清凭据再显示登录页。App 启动检查版本，断网保留凭据、显示主界面提示和重试；重试恢复加载数据，重试遇 401 回登录。超时保留约定专用提示。证据：`app-tests.cjs` 21 项，完整输出 `frontend-tests.txt`（两套合计 49 项）。
+- [x] 服务器地址栏、服务器／版本说明、切换服务器菜单只在 App 显示；返回键按实际打开顺序关闭最上层对话框，再依次隐藏图表提示、回记录页、返回 false。导出经 `Platform.saveFile()`；Web 原分享／下载流程迁至平台层，取消分享不触发下载。证据：上述行为验证及 `08-web-menu.png`、`08-export.json`、`08-import-double.png`。
+- [x] 容错：未知交通方式显示原始文字、灰色徽标并阻止编辑；看板年份和统计均只取认识的交通方式；未知坐席仅在编辑原交通方式时作为选项保留、原样提交，不带到不同交通方式。验证包括 `ferry`、`constructor`、`__proto__` 及未知坐席。
+- [x] P2.3：增加 `.t-unknown`、服务器地址栏、连接提示及原生菜单说明样式，全部使用既有主题变量，没有改交通方式配色。Web 新控件均隐藏，实测视口宽度和页面宽度均为 375px。
+- [x] 三条语法验收命令全部通过，见 `syntax-checks.txt`：`node --check static/platform.js`、`node --check static/app.js`、`node --check static/dashboard.js`。
+- [x] 附录 A 的 11 条 Web 回归全部通过；第 11 条包括 Network 面板同源检查和原始服务器日志核对，详见下表。
+- [x] 下文列出全部改动／新增的 `app.js` 函数及事件处理器，说明 Web 行为保持方式。
+
+交审材料保存在 **`/Users/niuniu/Documents/travel-log-review/p2/`**。其中包含仓库外的 Node 标准库验证脚本、首次失败证据、最终通过输出、截图、DOM 观察、原始服务器日志及附录 C 的 diff／提交列表。未使用业务数据库、未记录临时密码或完整令牌，未接触签名密钥。
+
+**附录 A Web 回归逐项证据**
+
+本轮使用 Chrome、375×812 CSS 像素、`http://127.0.0.1:8765/`，由 `start_web_review.py` 创建独立临时数据库和临时测试密码。截图均为本轮页面；浏览器本身的扩展不属于应用资源。
+
+| 项目 | 结果 | 实际观察与证据文件 |
+|---|---|---|
+| 1. 登录 | 通过 | 错误密码提示「密码错误」，正确密码进入空列表。`01-login-error.png`，原始日志先 401 后 200。 |
+| 2. 新增高铁 | 通过 | G1、CR400AF、二等座、553.50 元、1318.5 公里；2025-12-31 23:30～次日 01:00，卡片显示「G1 · CR400AF · 二等座」「1,318.5公里」「次日 01:00 · 1小时30分」。`02-hsr.png`。 |
+| 3. 车次推断 | 通过 | 编辑为 D301，动车组自动选中，二等座保留；改车型为 CRH2A 后保存，卡片为「D301 · CRH2A · 二等座」。`04-metro-dom.txt`、`09-relogin.txt` 中仍有该卡片。 |
+| 4. 地铁两段换乘 | 通过 | 新建北京地铁、2号线／1号线、6B。新增第 2 段时自动填复兴门；第 1 段下车站改建国门后，第 2 段同步。保存为西直门→国贸、40分钟、换乘1次、15公里。`04-link-observations.txt`、`04-metro-card.png`、`04-metro-dom.txt`。另建上海地铁2号线8A、人民广场→陆家嘴、4元15分钟。 |
+| 5. 编辑和删除 | 通过 | D301 编辑成功；另建零票价临时公交再确认删除，数量5→4，提示「已删除」。`web-server.log` 的 PUT、DELETE 和随后 GET 均200；删除后总计4条、564.50元。 |
+| 6. 筛选 | 通过 | 地铁筛选2条，合计9元55分钟；北京地铁筛选1条、5元40分钟。`06-filter-dom.txt`、`06-filter-beijing.png`。 |
+| 7. 看板 | 通过 | 总览／铁路／公交／地铁均可打开。2026年2条9元，2025年1条553.50元，2024年1条2元，全部4条564.50元。全部月趋势容器323px、内容590px，横滑位置267→133.5；点击柱子提示「2026年10月／地铁／1次」，年趋势也显示。常去站点为行程端点，换乘排行有建国门，线路按北京／上海分组。`07-observations.txt`、`07-trend-tooltip.png`、`07-dashboard-metro.txt`、`07-transfer-rank.txt`。 |
+| 8. 导入导出 | 通过 | 经新平台层实际下载 `travel-log-20261026 (2).json`，核对4条、56450分；通过系统选择框选同一文件，确认追加4条，提示「已导入4条」，数量变8，合计1129元、5.8小时。`08-export.json`、`08-import-double.txt`、`08-import-double.png`。 |
+| 9. 退出后重登 | 通过 | 退出回到只含密码的 Web 登录页；重登仍为8条、1129元、5.8小时。`09-relogin.txt`、`11-final-dom.txt`。 |
+| 10. 深色模式 | 通过 | DevTools 模拟 `prefers-color-scheme: dark`，背景 `rgb(0,0,0)`、文字 `rgb(242,242,247)`；记录与地铁看板可读，无横向溢出。`10-dark-records.png`、`10-dark-dashboard.png`。 |
+| 11. 开发者工具与日志 | 通过 | Network 中应用的 HTML、CSS、三个 JS、图标、manifest、session、trips 全部是 `http://127.0.0.1:8765` 同源请求；扩展资源单列。Console 重新加载后0条消息，初始的故意错误登录401和扩展来源保留。`11-network.txt`、`11-console-before-reload.txt`、`11-console-after-reload.txt`；服务器65条请求：200×57、201×5、401×1、404×2，无5xx。完整 `web-server.log` 与 `11-server-audit.txt` 保留全部原始证据。 |
+
+第11条的全部异常状态如下。401 是故意输错密码；两条 Chrome DevTools 自动探测 404 沿用用户此前明确回复「允许排除，保留原始证据」，单独列作非应用请求；没有通过改服务器或删日志掩盖它们。
+
+```text
+2026-10-26 16:39:45,525 INFO 127.0.0.1 "POST /api/login HTTP/1.1" 401 -
+2026-10-26 16:44:46,533 INFO 127.0.0.1 "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+2026-10-26 16:46:15,082 INFO 127.0.0.1 "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+```
+
+**`app.js` 全部函数变更及 Web 行为说明**
+
+| 函数／处理器 | 改动与 Web 行为保持方式 |
+|---|---|
+| `api()` | 改走平台来源、认证头和15秒超时；Web 来源为空、认证头为空，仍为原同源路径、Cookie、JSON请求。Web 401 的清凭据调用为空操作，继续原登录页流程。超时属于计划明确要求的变更，覆盖响应体阶段。 |
+| `tripCard()` | 认识的交通方式仍取原徽标和配色；仅对未知值按计划降级。 |
+| `buildSeatOptions()` | 已有坐席数组和点击取消逻辑不变；额外选项仅针对未知坐席的原类型编辑，不修改全局选项。 |
+| `openEditor()` | 已知类型仍填原表单并打开同一对话框；经 `showDialog()` 记录打开顺序。未知类型仅按计划提示，不编辑。 |
+| `exportData()` | 仍 GET `/api/export`、同一日期文件名、同一 `JSON.stringify(data, null, 2)` 和 MIME；原 Blob／File／分享取消／下载／回收链接逻辑完整移入平台层 Web 分支。 |
+| `showLogin()` | Web 仍关闭对话框、清列表／密码并聚焦密码；只额外清隐藏提示、填写隐藏服务器栏。App 才根据地址决定焦点。 |
+| `showMain()` | 只额外更新 Web 中隐藏的服务器说明，仍切换原登录／主界面。 |
+| `loadTrips()` | 请求与渲染不变；成功后收起提示，Web 该提示始终隐藏。 |
+| `boot()` | 先初始化平台，Web 初始化为空操作；仍按 session→判断是否登录→trips 的顺序。仅 App 跳过 Cookie 会话、显示新控件并按凭据启动。 |
+| 新增 `showDialog()` | 在原 `showModal()` 外记录打开顺序；对话框展示、关闭按钮和浏览器默认行为不变。 |
+| 新增 `loadServerData()` | Web 直接调用 `loadTrips()`；仅 App 加入启动／重试版本检查。 |
+| 新增 `showConnectionError()` | 仅 App 启动、登录后加载失败或重试调用；区分断网与专用超时提示。 |
+| 菜单按钮点击处理器 | 同一菜单改经 `showDialog()` 打开，Web 菜单仍为导出／导入／退出／取消。 |
+| 退出按钮异步处理器 | 改调 `Platform.signOut()`；Web 实现仍 POST `/api/logout`，最后回登录页。 |
+| 登录表单异步处理器 | 改调 `Platform.signIn()`；Web 忽略服务器栏，仍 POST `/api/login`、显示服务端错误、加载行程，保留按钮禁用／恢复和原密码必填校验。 |
+| 新增切换服务器、重试按钮处理器 | 控件在 Web 隐藏，仅供 App 使用；确认提示严格按计划。 |
+| 新增 `Platform.onBackButton()` 回调 | Web 注册为空操作；App 才执行对话框→图表提示→记录页→false的优先级。 |
+
+`dashboard.js` 仅修改 `renderDashboard()`：先过滤未知类型，再从同一集合产生年份及统计；所有既有类型、排行算法、数值与格式保持原样。`index.html` 的 App 控件默认隐藏；CSS 不改变原配色，Web 菜单的原按钮相邻关系保持不变。
+
+**偏差**
+
+- 无业务规则、契约、架构、依赖或文件范围偏离。仓库只改 `static/` 和本日志；现有测试、服务器、README、OpenAPI 均未改。
+- 为遵守文件范围，新增的 Node 标准库测试和实施检查表放在仓库外交审目录，保留可复现脚本及失败→通过证据；没有在 `tests/` 添加或修改内容。
+- 版本文字由 `Platform.init()` 读取桥中既有 `appVersion` 并写入专用文本节点；`app.js` 不读取原生桥，也不扩充 `Platform` 公共接口。App 的 URL 表单关闭浏览器自带格式校验，统一走平台层规范化，以支持计划允许的省略协议写法；Web 仍保留原校验。
+- 导入使用此前已验证可用的原生文件选择框和原生确认框；自动化一度选错同名隐藏输入框，界面正确提示「第2段请选择线路」，修正测试定位后保存成功，没有为测试改业务逻辑。
+- 第11条沿用用户确认的 Chrome 探测例外，完整日志保留。浏览器扩展来源按附录 A 原有规定排除。没有未说明的验收例外。
+
+**运行过的检查**
+
+- `node --check static/platform.js`、`node --check static/app.js`、`node --check static/dashboard.js`：全部通过；最终 `syntax-checks.txt`。
+- `node --test /Users/niuniu/Documents/travel-log-review/p2/platform-tests.cjs /Users/niuniu/Documents/travel-log-review/p2/app-tests.cjs`：49项通过，0失败。平台层28项、界面层21项；完整 `frontend-tests.txt`。`platform-red.txt`、`app-red.txt`、`timeout-red.txt` 保留实现前或修复前的失败输出。
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v`：49项全部通过，26.706秒，未修改测试；完整 `backend-tests.txt`。
+- 附录 A：11项通过，逐项证据见上表；最后在最终文件上重新加载，8条记录、375px无溢出，所有 App 专用控件均隐藏。
+- `git diff --check` 及实现提交前 `git diff --cached --check`：通过；范围核对确认服务器、测试、README、OpenAPI无差异。
+- 临时服务已停止、数据库随临时目录清理；专用测试标签关闭，站点缩放、视口和 DevTools 临时深色模拟已恢复。
+
+**遗留问题和需要决定的事**
+
+- P2 无未完成验收项；App 模式当前通过桥边界模拟验证，真实 Capacitor／WebView、系统分享和硬件返回键按计划留在 P3／后续真机验收，不能将本轮测试称为安卓端到端通过。
+- 按用户要求停在 P2；尚未创建 `mobile/`、安装任何 App 依赖或开始 P3。P2/P3 的 Opus 联合审查点保持计划原安排。
