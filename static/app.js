@@ -812,6 +812,159 @@ async function importFile(file) {
   await loadTrips();
 }
 
+// ---------- 快速JSON导入：复制提示词、预览、确认后写入 ----------
+
+const quickImportDialog = $("#quick-import-dialog");
+const quickImportText = $("#quick-import-text");
+const quickImportConfirm = $("#confirm-quick-import");
+let quickImportTimer = null;
+let quickImportBusy = false;
+let quickImportUncertain = false;
+
+function resetQuickImport() {
+  clearTimeout(quickImportTimer);
+  quickImportTimer = null;
+  quickImportText.value = "";
+  quickImportText.disabled = false;
+  quickImportConfirm.disabled = true;
+  quickImportConfirm.textContent = "确认导入";
+  $("#quick-import-close").disabled = false;
+  $("#copy-import-prompt").disabled = false;
+  $("#import-prompt").value = "";
+  $("#import-prompt-details").open = false;
+  $("#import-copy-status").textContent = "";
+  $("#quick-import-status").textContent = "";
+  $("#quick-import-error").textContent = "";
+  $("#quick-import-preview").replaceChildren();
+  quickImportUncertain = false;
+}
+
+function previewText(value, missing = "待核对") {
+  if (typeof value !== "string" && typeof value !== "number") return missing;
+  const text = String(value).trim();
+  return text ? (text.length > 160 ? text.slice(0, 160) + "…" : text) : missing;
+}
+
+function previewPrice(trip) {
+  if (Object.hasOwn(trip, "price")) {
+    const price = previewText(trip.price, "");
+    if (/^\d+(\.\d{1,2})?$/.test(price) && Number(price) <= 1000000) return "¥" + price;
+    return "票价待核对";
+  }
+  if (Number.isInteger(trip.price_cents) && trip.price_cents >= 0 && trip.price_cents <= 100000000) {
+    return fmtPrice(trip.price_cents);
+  }
+  return "票价待核对";
+}
+
+function renderQuickImport(trips) {
+  const preview = $("#quick-import-preview");
+  preview.replaceChildren();
+  for (const [index, trip] of trips.slice(0, 20).entries()) {
+    const transport = typeof trip.transport === "string" && Object.hasOwn(TMAP, trip.transport)
+      ? TMAP[trip.transport].label : "交通方式待核对";
+    const legs = Array.isArray(trip.legs) ? trip.legs : [];
+    const from = trip.transport === "metro" ? legs[0]?.from_station : trip.from_place;
+    const to = trip.transport === "metro" ? legs[legs.length - 1]?.to_station : trip.to_place;
+    preview.append(h("li", {},
+      h("strong", {}, `${index + 1}. ${transport} · ${previewText(from, "未填写起点")} → ${previewText(to, "未填写终点")}`),
+      h("p", {}, `${previewText(trip.depart_at)} → ${previewText(trip.arrive_at)}`),
+      h("p", {}, previewPrice(trip))));
+  }
+  $("#quick-import-status").textContent = `已解析 ${trips.length} 条${trips.length > 20 ? "，仅展示前 20 条" : ""}，请核对后确认导入。`;
+  quickImportConfirm.textContent = `确认导入 ${trips.length} 条`;
+  quickImportConfirm.disabled = quickImportBusy || quickImportUncertain;
+}
+
+function parseQuickImport() {
+  clearTimeout(quickImportTimer);
+  quickImportTimer = null;
+  try {
+    const parsed = QuickImport.parse(quickImportText.value);
+    renderQuickImport(parsed.trips);
+    return parsed;
+  } catch (err) {
+    $("#quick-import-status").textContent = "";
+    $("#quick-import-error").textContent = err.message;
+    quickImportConfirm.disabled = true;
+    return null;
+  }
+}
+
+$("#quick-import-btn").addEventListener("click", () => {
+  menuDialog.close();
+  resetQuickImport();
+  $("#import-prompt").value = QuickImport.buildPrompt(toLocalInput(new Date()).slice(0, 10));
+  showDialog(quickImportDialog);
+});
+
+$("#copy-import-prompt").addEventListener("click", async () => {
+  const prompt = $("#import-prompt");
+  prompt.value = QuickImport.buildPrompt(toLocalInput(new Date()).slice(0, 10));
+  try {
+    await navigator.clipboard.writeText(prompt.value);
+    $("#import-copy-status").textContent = "已复制提示词，请粘贴到你选择的 AI 工具并附上行程资料。";
+  } catch {
+    $("#import-prompt-details").open = true;
+    prompt.focus();
+    prompt.select();
+    $("#import-copy-status").textContent = "未能自动复制，已选中提示词，请手动复制。";
+  }
+});
+
+quickImportText.addEventListener("input", () => {
+  if (quickImportUncertain || quickImportBusy) return;
+  clearTimeout(quickImportTimer);
+  quickImportConfirm.disabled = true;
+  quickImportConfirm.textContent = "确认导入";
+  $("#quick-import-preview").replaceChildren();
+  $("#quick-import-error").textContent = "";
+  $("#quick-import-status").textContent = quickImportText.value.trim() ? "正在解析…" : "";
+  quickImportTimer = setTimeout(parseQuickImport, 250);
+});
+
+quickImportConfirm.addEventListener("click", async () => {
+  if (quickImportBusy || quickImportUncertain) return;
+  const parsed = parseQuickImport();
+  if (!parsed) return;
+  quickImportBusy = true;
+  quickImportText.disabled = true;
+  quickImportConfirm.disabled = true;
+  $("#quick-import-close").disabled = true;
+  $("#copy-import-prompt").disabled = true;
+  $("#quick-import-error").textContent = "";
+  $("#quick-import-status").textContent = "正在导入，请稍候…";
+  let result;
+  try {
+    result = await api("POST", "/api/import", { trips: parsed.trips });
+  } catch (err) {
+    quickImportUncertain = err.status === 0;
+    $("#quick-import-status").textContent = "";
+    $("#quick-import-error").textContent = quickImportUncertain
+      ? "导入结果尚未确认，请先关闭此面板并刷新记录核对，确认未导入后再重试，避免重复追加。"
+      : err.message;
+  } finally {
+    quickImportBusy = false;
+    quickImportText.disabled = false;
+    quickImportConfirm.disabled = quickImportUncertain || !quickImportDialog.open;
+    $("#quick-import-close").disabled = false;
+    $("#copy-import-prompt").disabled = false;
+  }
+  if (!result) return;
+  quickImportDialog.close();
+  toast(`已导入 ${result.imported} 条`);
+  try {
+    await loadTrips();
+  } catch {
+    toast(`已导入 ${result.imported} 条，但刷新失败，请刷新页面查看`);
+  }
+});
+
+quickImportDialog.addEventListener("close", resetQuickImport);
+quickImportDialog.addEventListener("cancel", (event) => {
+  if (quickImportBusy) event.preventDefault();
+});
+
 const dialogStack = [];
 
 function showDialog(dialog) {
@@ -822,6 +975,7 @@ function showDialog(dialog) {
 }
 
 Platform.onBackButton(() => {
+  if (quickImportBusy && quickImportDialog.open) return true;
   while (dialogStack.length) {
     const dialog = dialogStack.pop();
     if (!dialog.open) continue;

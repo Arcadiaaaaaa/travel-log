@@ -127,6 +127,7 @@
         <p id="native-version"></p>
       </div>
       <button type="button" class="menu-item" id="export-btn">导出数据（JSON）</button>
+      <button type="button" class="menu-item" id="quick-import-btn">快速 JSON 导入</button>
       <button type="button" class="menu-item" id="import-btn">从 JSON 导入</button>
       <button type="button" class="menu-item danger-text" id="logout-btn">退出登录</button>
       <button type="button" class="menu-item danger-text" id="switch-server-btn" hidden>切换服务器</button>
@@ -134,10 +135,41 @@
     <button type="button" class="menu-item cancel" data-close>取消</button>
   </dialog>
 
+  <dialog id="quick-import-dialog" class="sheet" aria-labelledby="quick-import-title">
+    <div class="sheet-head">
+      <button type="button" class="link" id="quick-import-close" data-close>取消</button>
+      <h2 id="quick-import-title">快速 JSON 导入</h2>
+    </div>
+    <div class="sheet-body quick-import-body">
+      <p class="quick-import-help">复制提示词到你选择的 AI 工具，附上行程资料；信息补齐后，把生成的 JSON 粘贴到下方核对。</p>
+      <button type="button" class="btn primary" id="copy-import-prompt">复制 AI 整理提示词</button>
+      <p class="quick-import-help">本站不会将资料发送给 AI。交给其他工具前，请去掉身份证号、电话号码和订单号等个人信息。</p>
+      <details id="import-prompt-details">
+        <summary>查看提示词／手动复制</summary>
+        <label class="field quick-prompt-field">
+          <span>AI 整理提示词</span>
+          <textarea id="import-prompt" rows="8" readonly spellcheck="false"></textarea>
+        </label>
+      </details>
+      <p id="import-copy-status" class="quick-import-help" role="status"></p>
+      <label class="field">
+        <span>粘贴 JSON</span>
+        <textarea id="quick-import-text" rows="7" spellcheck="false" autocomplete="off" placeholder='{"trips": [...]}' aria-describedby="quick-import-hint"></textarea>
+      </label>
+      <p id="quick-import-hint" class="quick-import-help">支持行程数组或带 trips 的 JSON，包括原导出文件；一次最多 20000 条、5 MB。粘贴后只预览，不会自动保存。</p>
+      <p id="quick-import-status" class="quick-import-help" role="status" aria-live="polite"></p>
+      <p id="quick-import-error" class="error" role="alert"></p>
+      <ol id="quick-import-preview" class="quick-import-preview" aria-label="待导入行程预览"></ol>
+      <p class="quick-import-help">请核对 AI 生成的内容。确认后只会追加，不覆盖、不去重；任意一条未通过校验，整批都不会导入。</p>
+      <button type="button" class="btn primary" id="confirm-quick-import" disabled>确认导入</button>
+    </div>
+  </dialog>
+
   <input type="file" id="import-file" accept="application/json,.json" hidden>
   <div id="toast" class="toast" role="status" hidden></div>
   <!-- native-bridge -->
   <script src="/platform.js"></script>
+  <script src="/quick-import.js"></script>
   <script src="/app.js"></script>
   <script src="/dashboard.js"></script>
 </body>

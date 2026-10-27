@@ -350,6 +350,19 @@ dialog.menu { background: transparent; padding: 0 10px calc(10px + env(safe-area
 .menu-item.cancel { border-radius: var(--radius); font-weight: 600; }
 .danger-text { color: var(--danger) !important; }
 
+/* 快速JSON导入 */
+.quick-import-body { display: flex; flex-direction: column; gap: 12px; }
+.quick-import-help { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0; }
+.quick-import-body summary { color: var(--accent); cursor: pointer; font-size: 14px; }
+.quick-prompt-field { margin-top: 10px; }
+.quick-import-body textarea { font-family: ui-monospace, monospace; }
+#quick-import-error { text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
+.quick-import-preview { margin: 0; padding: 0; list-style: none; }
+.quick-import-preview li { padding: 12px; background: var(--card); border-radius: var(--radius); overflow-wrap: anywhere; }
+.quick-import-preview li + li { margin-top: 8px; }
+.quick-import-preview strong { display: block; font-size: 14px; }
+.quick-import-preview p { margin: 5px 0 0; font-size: 13px; color: var(--muted); }
+
 .toast {
   position: fixed;
   left: 50%;
